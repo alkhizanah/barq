@@ -741,6 +741,7 @@ fn analyzeFunctions(self: *Sema) Error!void {
             .air_name = air_name,
             .type = symbol.type,
             .visibility = symbol.visibility,
+            .is_const = true,
             .maybe_function_definition = function,
         });
     }
