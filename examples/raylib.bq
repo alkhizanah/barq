@@ -117,8 +117,9 @@ fn graph() {
 }
 
 export fn main() u8 {
-    InitWindow(800, 600, "Raylib Example");
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 
+    InitWindow(800, 600, "Raylib Example");
 
     while !WindowShouldClose() {
         BeginDrawing();
@@ -145,6 +146,10 @@ type Color = struct {
     b c_uchar,
     a c_uchar,
 };
+
+const FLAG_WINDOW_RESIZABLE = 0x00000004;
+
+extern fn SetConfigFlags(flags c_uint);
 
 extern fn InitWindow(width c_int, height c_int, title [*]const u8);
 extern fn CloseWindow();
