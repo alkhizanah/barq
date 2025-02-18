@@ -573,13 +573,26 @@ fn analyzeGlobalVariable(self: *Sema, variable: *Variable, sir_definition: Sir.D
         }
     }
 
-    if (variable.type == .void) {
-        self.error_info = .{
-            .message = "cannot declare a variable with type 'void'",
-            .source_loc = SourceLoc.find(self.module.file.buffer, sir_definition.subsymbol.name.token_start),
-        };
+    switch (variable.type) {
+        .void => {
+            self.error_info = .{
+                .message = "cannot declare a variable with type 'void'",
+                .source_loc = SourceLoc.find(self.module.file.buffer, sir_definition.subsymbol.name.token_start),
+            };
 
-        return error.WithMessage;
+            return error.WithMessage;
+        },
+
+        .module => {
+            self.error_info = .{
+                .message = "cannot declare a variable with type 'module'",
+                .source_loc = SourceLoc.find(self.module.file.buffer, sir_definition.subsymbol.name.token_start),
+            };
+
+            return error.WithMessage;
+        },
+
+        else => {},
     }
 
     try self.air.global_variables.put(
@@ -1972,10 +1985,26 @@ fn analyzeVariable(self: *Sema, infer: bool, subsymbol: Sir.SubSymbol) Error!voi
         symbol.type = self.stack.getLast().getType();
     }
 
-    if (symbol.type == .void) {
-        self.error_info = .{ .message = "cannot declare a variable with type 'void'", .source_loc = SourceLoc.find(self.module.file.buffer, symbol.name.token_start) };
+    switch (symbol.type) {
+        .void => {
+            self.error_info = .{
+                .message = "cannot declare a variable with type 'void'",
+                .source_loc = SourceLoc.find(self.module.file.buffer, subsymbol.name.token_start),
+            };
 
-        return error.WithMessage;
+            return error.WithMessage;
+        },
+
+        .module => {
+            self.error_info = .{
+                .message = "cannot declare a variable with type 'module'",
+                .source_loc = SourceLoc.find(self.module.file.buffer, subsymbol.name.token_start),
+            };
+
+            return error.WithMessage;
+        },
+
+        else => {},
     }
 
     const variable: Variable = .{
