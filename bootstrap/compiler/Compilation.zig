@@ -18,53 +18,69 @@ allocator: std.mem.Allocator,
 
 root_file: File,
 
-compiled_files: std.StringHashMapUnmanaged(CompiledFile) = .{},
+modules: std.StringArrayHashMapUnmanaged(Module) = .{},
 
 env: Environment,
 
+pub const File = struct {
+    path: []const u8,
+    buffer: [:0]const u8,
+};
+
+pub const Module = struct {
+    file: File,
+    sir: Sir,
+    scope: Symbol.Scope(Sema.Variable) = .{},
+};
+
 pub const Environment = struct {
-    barq_lib_dir: std.fs.Dir,
+    barq_lib: BarqLib,
     target: std.Target,
 
-    /// Open the Barq library directory by finding `lib/barq` or `lib`
-    pub fn openBarqLibrary() !std.fs.Dir {
-        var self_exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    pub const BarqLib = struct {
+        dir: std.fs.Dir,
+        std_file: std.fs.File,
+        std_file_path: []const u8,
 
-        const self_exe_dir_path = try std.fs.selfExeDirPath(&self_exe_dir_path_buf);
+        pub fn openDir() !std.fs.Dir {
+            var self_exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
 
-        const self_exe_dir = try std.fs.openDirAbsolute(self_exe_dir_path, .{});
+            const self_exe_dir_path = try std.fs.selfExeDirPath(&self_exe_dir_path_buf);
 
-        // We start from the executable directory, and iterate upwards
-        var dir = self_exe_dir;
+            const self_exe_dir = try std.fs.openDirAbsolute(self_exe_dir_path, .{});
 
-        var opened = false;
+            // We start from the executable directory, and iterate upwards
+            var dir = self_exe_dir;
 
-        while (!opened) {
-            opened = true;
+            var opened = false;
 
-            // We first try to open `lib/barq` directory so we differentiate between
-            // `/usr/lib` and `/usr/lib/barq` if the executable is in `/usr/bin`
-            dir = dir.openDir("lib" ++ std.fs.path.sep_str ++ "barq", .{}) catch |err| switch (err) {
-                error.FileNotFound => blk: {
-                    // Ok so we didn't find `lib/barq` let's now try the more generic `lib`
-                    break :blk dir.openDir("lib", .{}) catch |another_err| switch (another_err) {
-                        error.FileNotFound => {
-                            opened = false;
+            while (!opened) {
+                opened = true;
 
-                            // We still didn't find any of those, so we need to go up one directory
-                            break :blk try dir.openDir("..", .{});
-                        },
+                // We first try to open `lib/barq` directory so we differentiate between
+                // `/usr/lib` and `/usr/lib/barq` if the executable is in `/usr/bin`
+                dir = dir.openDir("lib" ++ std.fs.path.sep_str ++ "barq", .{}) catch |err| switch (err) {
+                    error.FileNotFound => blk: {
+                        // Ok so we didn't find `lib/barq` let's now try the more generic `lib`
+                        break :blk dir.openDir("lib", .{}) catch |another_err| switch (another_err) {
+                            error.FileNotFound => {
+                                opened = false;
 
-                        else => return err,
-                    };
-                },
+                                // We still didn't find any of those, so we need to go up one directory
+                                break :blk try dir.openDir("..", .{});
+                            },
 
-                else => return err,
-            };
+                            else => return err,
+                        };
+                    },
+
+                    else => return err,
+                };
+            }
+
+            return dir;
         }
-
-        return dir;
-    }
+    };
 };
 
 pub fn init(allocator: std.mem.Allocator, root_file: File, env: Environment) Compilation {
@@ -74,18 +90,6 @@ pub fn init(allocator: std.mem.Allocator, root_file: File, env: Environment) Com
         .env = env,
     };
 }
-
-pub const File = struct {
-    path: []const u8,
-    buffer: [:0]const u8,
-};
-
-pub const CompiledFile = struct {
-    path: []const u8,
-    buffer: [:0]const u8,
-    sir: Sir,
-    scope: Symbol.Scope(Sema.Variable),
-};
 
 pub fn emit(
     self: Compilation,

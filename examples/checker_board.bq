@@ -1,22 +1,22 @@
-import "std/io.bq";
+const std = @import("std");
 
 pub fn main() {
-    var i s32 = 0;
+    var i u32 = 0;
 
     while i < 8 {
-        var j s32 = 0;
+        var j u32 = 0;
 
         while j < 8 {
             if (i + j) % 2 == 0 {
-                std::io::print("\e[47m  \e[0m");
+                std.io.print("\e[47m  \e[0m");
             } else {
-                std::io::print("\e[100m  \e[0m");
+                std.io.print("\e[100m  \e[0m");
             }
 
             j += 1;
         }
 
-        std::io::print("\n");
+        std.io.print("\n");
 
         i += 1;
     }

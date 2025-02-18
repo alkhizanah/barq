@@ -408,17 +408,36 @@ pub const Cli = struct {
         target: std.Target,
         code_model: CodeModel,
     ) u8 {
-        const barq_lib_dir = Compilation.Environment.openBarqLibrary() catch {
-            std.debug.print("Error: could not open the barq library directory\n", .{});
+        var barq_lib_dir = Compilation.Environment.BarqLib.openDir() catch |err| {
+            std.debug.print("Error: could not open the barq library directory: {s}\n", .{errorDescription(err)});
 
             return 1;
         };
 
-        const root_file = std.fs.cwd().openFile(root_file_path, .{}) catch |err| {
+        defer barq_lib_dir.close();
+
+        var barq_lib_std_file = barq_lib_dir.openFile("std.bq", .{}) catch |err| {
+            std.debug.print("Error: could not open the 'std.bq' file in barq library directory: {s}\n", .{errorDescription(err)});
+
+            return 1;
+        };
+
+        defer barq_lib_std_file.close();
+
+        var barq_lib_std_file_path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        const barq_lib_std_file_path = barq_lib_dir.realpath("std.bq", &barq_lib_std_file_path_buffer) catch |err| {
+            std.debug.print("Error: could not get the real 'std.bq' file path in barq library directory: {s}\n", .{errorDescription(err)});
+
+            return 1;
+        };
+
+        var root_file = std.fs.cwd().openFile(root_file_path, .{}) catch |err| {
             std.debug.print("Error: could not open root file '{s}': {s}\n", .{ root_file_path, errorDescription(err) });
 
             return 1;
         };
+
+        defer root_file.close();
 
         const root_file_buffer = root_file.readToEndAllocOptions(self.allocator, std.math.maxInt(u32), null, @alignOf(u8), 0) catch |err| {
             std.debug.print("Error: could not read root file '{s}': {s}\n", .{ root_file_path, errorDescription(err) });
@@ -430,7 +449,11 @@ pub const Cli = struct {
             self.allocator,
             .{ .path = root_file_path, .buffer = root_file_buffer },
             .{
-                .barq_lib_dir = barq_lib_dir,
+                .barq_lib = .{
+                    .dir = barq_lib_dir,
+                    .std_file = barq_lib_std_file,
+                    .std_file_path = barq_lib_std_file_path,
+                },
                 .target = target,
             },
         );
@@ -480,7 +503,7 @@ pub const Cli = struct {
                 return 1;
             },
 
-            else => {
+            error.WithMessage => {
                 std.debug.print("{s}:{}:{}: {s}\n", .{
                     compilation_file.path,
                     sir_parser.error_info.?.source_loc.line,
@@ -490,11 +513,29 @@ pub const Cli = struct {
 
                 return 1;
             },
+
+            error.WithoutMessage => {},
         };
 
-        var air: Air = .{};
+        const module_id = (compilation.modules.getOrPutValue(self.allocator, compilation_file.path, .{
+            .file = compilation_file,
+            .sir = sir_parser.sir,
+        }) catch |err| {
+            std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 
-        var sema = Sema.init(self.allocator, &compilation, compilation_file, sir_parser.sir, &air) catch |err| {
+            return 1;
+        }).index;
+
+        var air: Air = .{};
+        var lazy_units: Sema.LazyUnits = .{};
+
+        var sema = Sema.init(
+            self.allocator,
+            &compilation,
+            @intCast(module_id),
+            &air,
+            &lazy_units,
+        ) catch |err| {
             std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 
             return 1;
@@ -509,7 +550,7 @@ pub const Cli = struct {
                 return 1;
             },
 
-            else => {
+            error.WithMessage => {
                 std.debug.print("{s}:{}:{}: {s}\n", .{
                     compilation_file.path,
                     sema.error_info.?.source_loc.line,
@@ -519,6 +560,8 @@ pub const Cli = struct {
 
                 return 1;
             },
+
+            error.WithoutMessage => return 1,
         };
 
         sir_parser.sir.deinit(self.allocator);

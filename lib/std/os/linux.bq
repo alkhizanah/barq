@@ -1,5 +1,3 @@
-module std::os::linux;
-
 // x86_64 specific declaration
 pub type SYS = enum usize {
     read = 0,
@@ -460,7 +458,7 @@ pub fn syscall6(code SYS, arg1 usize, arg2 usize, arg3 usize, arg4 usize, arg5 u
 }
 
 pub fn read(fd s32, bufferptr usize, count usize) usize {
-    return syscall3(SYS::read, (&fd as *u32).*, bufferptr, count);
+    return syscall3(SYS.read, (&fd as *u32).*, bufferptr, count);
 }
 
 pub const STDIN = 0;
@@ -468,15 +466,15 @@ pub const STDOUT = 1;
 pub const STDERR = 2;
 
 pub fn write(fd s32, bufferptr usize, count usize) usize {
-    return syscall3(SYS::write, (&fd as *u32).*, bufferptr, count);
+    return syscall3(SYS.write, (&fd as *u32).*, bufferptr, count);
 }
 
 pub fn open(path [*]const u8, flags u32) s32 {
-    return (&(syscall2(SYS::open, path as usize, flags) as u32) as *s32).*;
+    return (&(syscall2(SYS.open, path as usize, flags) as u32) as *s32).*;
 }
 
 pub fn close(fd s32) s32 {
-    return (&(syscall1(SYS::close, (&fd as *u32).* as usize) as u32) as *s32).*;
+    return (&(syscall1(SYS.close, (&fd as *u32).* as usize) as u32) as *s32).*;
 }
 
 pub type timespec = struct {
@@ -540,42 +538,42 @@ pub type Statx = struct {
 };
 
 pub fn stat(path [*]const u8, statbuf *Stat) usize {
-    return syscall2(SYS::stat, path as usize, statbuf as usize);
+    return syscall2(SYS.stat, path as usize, statbuf as usize);
 }
 
 pub fn lstat(path [*]const u8, statbuf *Stat) usize {
-    return syscall2(SYS::lstat, path as usize, statbuf as usize);
+    return syscall2(SYS.lstat, path as usize, statbuf as usize);
 }
 
 pub fn fstat(fd s32, statbuf *Stat) usize {
-    return syscall2(SYS::fstat, (&fd as *u32).* as usize, statbuf as usize);
+    return syscall2(SYS.fstat, (&fd as *u32).* as usize, statbuf as usize);
 }
 
 pub fn fstatat(dirfd s32, path [*]const u8, statbuf *Stat, flags u32) usize {
-    return syscall5(SYS::fstatat64, (&dirfd as *u32).*, path as usize, statbuf as usize, flags);
+    return syscall5(SYS.fstatat64, (&dirfd as *u32).*, path as usize, statbuf as usize, flags);
 }
 
 pub fn statx(dirfd s32, path [*]const u8, flags u32, mask u32, statxbuf *Statx) usize {
-    return syscall6(SYS::statx, (&dirfd as *u32).*, path as usize, flags, mask, statxbuf as usize);
+    return syscall6(SYS.statx, (&dirfd as *u32).*, path as usize, flags, mask, statxbuf as usize);
 }
 
 pub fn sendfile(outfd s32, infd s32, offset *s64, count usize) usize {
-    return syscall6(SYS::sendfile, (&outfd as *u32).*, (&infd as *u32).*, offset as usize, count, 0);
+    return syscall6(SYS.sendfile, (&outfd as *u32).*, (&infd as *u32).*, offset as usize, count, 0);
 }
 
 pub fn sendto(fd s32, buf [*]const u8, len usize, flags u32, addr *const sockaddr, addrlen socklen_t) usize {
-    return syscall6(SYS::sendto, (&fd as *u32).*, buf as usize, len, flags, addr as usize, addrlen);
+    return syscall6(SYS.sendto, (&fd as *u32).*, buf as usize, len, flags, addr as usize, addrlen);
 }
 
 pub fn access(path [*]const u8, mode u32) usize {
-    return syscall3(SYS::access, path as usize, mode, 0);
+    return syscall3(SYS.access, path as usize, mode, 0);
 }
 
 pub const AF_INET = 2;
 pub const SOCK_STREAM = 1;
 
 pub fn socket(domain u32, type_ u32, protocol u32) s32 {
-    return (&(syscall3(SYS::socket, domain, type_, protocol) as u32) as *s32).*;
+    return (&(syscall3(SYS.socket, domain, type_, protocol) as u32) as *s32).*;
 }
 
 pub const SOL_SOCKET = 1;
@@ -583,7 +581,7 @@ pub const SO_REUSEADDR = 2;
 pub const SO_REUSEPORT = 15;
 
 pub fn setsockopt(fd s32, level u32, optname u32, optvalptr usize, optlen usize) {
-    syscall5(SYS::setsockopt, (&fd as *u32).*, level, optname, optvalptr, optlen);
+    syscall5(SYS.setsockopt, (&fd as *u32).*, level, optname, optvalptr, optlen);
 }
 
 pub type sa_family_t = u16;
@@ -595,7 +593,7 @@ pub type sockaddr = struct {
    data [14]u8,
 };
 
-pub type sockaddr::in = struct {
+pub type sockaddr_in = struct {
     family sa_family_t,
     port in_port_t,
     addr u32,
@@ -603,37 +601,37 @@ pub type sockaddr::in = struct {
 };
 
 pub fn accept(fd s32, addr *sockaddr, addrlenptr *socklen_t) s32 {
-    return (&(syscall4(SYS::accept, (&fd as *u32).*, addr as usize, addrlenptr as usize, 0) as u32) as *s32).*;
+    return (&(syscall4(SYS.accept, (&fd as *u32).*, addr as usize, addrlenptr as usize, 0) as u32) as *s32).*;
 }
 
 pub fn bind(fd s32, addr *const sockaddr, addrlen socklen_t) usize {
-    return syscall3(SYS::bind, (&fd as *u32).*, addr as usize, addrlen as usize);
+    return syscall3(SYS.bind, (&fd as *u32).*, addr as usize, addrlen as usize);
 }
 
 pub fn listen(fd s32, backlog u32) usize {
-    return syscall2(SYS::listen, (&fd as *u32).*, backlog);
+    return syscall2(SYS.listen, (&fd as *u32).*, backlog);
 }
 
 pub fn exit(status u8) {
-    syscall1(SYS::exit, status);
+    syscall1(SYS.exit, status);
 }
 
 pub fn exit_group(status u8) {
-    syscall1(SYS::exit_group, status);
+    syscall1(SYS.exit_group, status);
 }
 
 pub fn mmap(addr usize, length usize, prot u32, flags u32, fd s32, offset s64) usize {
-    return syscall6(SYS::mmap, addr, length, prot, flags, (&fd as *u32).*, (&offset as *u64).*);
+    return syscall6(SYS.mmap, addr, length, prot, flags, (&fd as *u32).*, (&offset as *u64).*);
 }
 
 pub fn mprotect(addr usize, length usize, prot u32) s32 {
-    return (&(syscall3(SYS::mprotect, addr, length, prot) as u32) as *s32).*;
+    return (&(syscall3(SYS.mprotect, addr, length, prot) as u32) as *s32).*;
 }
 
 pub fn munmap(addr usize, length usize) s32 {
-    return (&(syscall2(SYS::munmap, addr, length) as u32) as *s32).*;
+    return (&(syscall2(SYS.munmap, addr, length) as u32) as *s32).*;
 }
 
 pub fn mremap(old_addr usize, old_len usize, new_len usize, flags u32, new_addr usize) usize {
-    return syscall5(SYS::mremap, old_addr, old_len, new_len, flags, new_addr);
+    return syscall5(SYS.mremap, old_addr, old_len, new_len, flags, new_addr);
 }

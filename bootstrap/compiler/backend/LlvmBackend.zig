@@ -806,6 +806,7 @@ fn renderCast(self: *LlvmBackend, cast_to: Type) Error!void {
                 .bool => c.LLVMBuildZExt(self.builder, cast_value, llvm_cast_to, ""),
 
                 .void => unreachable,
+                .module => unreachable,
                 .function => unreachable,
                 .@"struct" => unreachable,
                 .array => unreachable,
@@ -1314,6 +1315,8 @@ fn llvmCpuFeaturesZ(allocator: std.mem.Allocator, target: std.Target) std.mem.Al
 
 fn llvmType(self: *LlvmBackend, @"type": Type) Error!c.LLVMTypeRef {
     return switch (@"type") {
+        .module => unreachable,
+
         .void => c.LLVMVoidTypeInContext(self.context),
         .bool => c.LLVMIntTypeInContext(self.context, 1),
 

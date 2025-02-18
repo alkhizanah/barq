@@ -17,6 +17,7 @@ pub const Visibility = enum {
 pub const Type = union(enum) {
     void,
     bool,
+    module,
     int: Int,
     float: Float,
     pointer: Pointer,
@@ -211,6 +212,7 @@ pub const Type = union(enum) {
         switch (self) {
             .void => try writer.writeAll("void"),
             .bool => try writer.writeAll("bool"),
+            .module => try writer.writeAll("module"),
 
             .int => |int| try writer.print("{c}{}", .{ if (int.signedness == .unsigned) @as(u8, 'u') else @as(u8, 's'), int.bits }),
             .float => |float| try writer.print("f{}", .{float.bits}),
@@ -400,6 +402,10 @@ pub fn Scope(comptime V: type) type {
 
         pub fn ensureTotalCapacity(self: *Self, allocator: std.mem.Allocator, new_capacity: u32) std.mem.Allocator.Error!void {
             try self.items.ensureTotalCapacity(allocator, new_capacity);
+        }
+
+        pub fn ensureUnusedCapacity(self: *Self, allocator: std.mem.Allocator, additional_capacity: u32) std.mem.Allocator.Error!void {
+            try self.items.ensureUnusedCapacity(allocator, additional_capacity);
         }
     };
 }

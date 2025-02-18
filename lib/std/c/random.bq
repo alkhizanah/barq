@@ -1,4 +1,0 @@
-module std::c;
-
-pub extern fn srand(seed c_uint);
-pub extern fn rand() c_int;

@@ -10,6 +10,7 @@ index: u32,
 pub const State = enum {
     start,
     identifier,
+    at_sign,
     string_literal,
     string_literal_back_slash,
     char_literal,
@@ -257,6 +258,12 @@ pub fn next(self: *Lexer) Token {
                 result.tag = .semicolon;
             },
 
+            '@' => {
+                result.range.start = self.index;
+                self.index += 1;
+                continue :state .at_sign;
+            },
+
             else => {
                 result.range.start = self.index;
                 self.index += 1;
@@ -266,7 +273,7 @@ pub fn next(self: *Lexer) Token {
         },
 
         .identifier => switch (self.buffer[self.index]) {
-            'a'...'z', 'A'...'Z', '0'...'9', '_', ':' => {
+            'a'...'z', 'A'...'Z', '0'...'9', '_' => {
                 self.index += 1;
                 continue :state .identifier;
             },
@@ -274,9 +281,23 @@ pub fn next(self: *Lexer) Token {
             else => {
                 result.range.end = self.index;
 
-                if (Token.keywords.get(self.buffer[result.range.start..result.range.end])) |keyword_tag| {
-                    result.tag = keyword_tag;
+                if (Token.keywords.get(self.buffer[result.range.start..result.range.end])) |tag| {
+                    result.tag = tag;
                 }
+            },
+        },
+
+        .at_sign => switch (self.buffer[self.index]) {
+            'a'...'z', 'A'...'Z', '_' => {
+                result.range.start = self.index;
+                self.index += 1;
+                result.tag = .special_identifier;
+                continue :state .identifier;
+            },
+
+            else => {
+                result.range.end = self.index;
+                result.tag = .invalid;
             },
         },
 

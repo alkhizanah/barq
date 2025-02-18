@@ -1,4 +1,4 @@
-import "std/io.bq";
+const std = @import("std");
 
 pub fn main() {
     var i u32 = 1;
@@ -6,15 +6,15 @@ pub fn main() {
     while i < 16 {
         if i % 3 == 0 {
             if i % 5 == 0 {
-                std::io::print("FizzBuzz\n");
+                std.io.print("FizzBuzz\n");
             } else {
-                std::io::print("Fizz\n");
+                std.io.print("Fizz\n");
             }
         } else if i % 5 == 0 {
-            std::io::print("Buzz\n");
+            std.io.print("Buzz\n");
         } else {
-            std::io::numprint(i);
-            std::io::print("\n");
+            std.io.numprint(i);
+            std.io.print("\n");
         }
 
         i += 1;

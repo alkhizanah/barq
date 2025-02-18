@@ -1,7 +1,5 @@
-module std::process;
-
-import "os/linux.bq";
+const os = @import("os.bq");
 
 pub fn exit(status u8) {
-    std::os::linux::exit_group(status);
+    os.linux.exit_group(status);
 }

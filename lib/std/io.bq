@@ -1,6 +1,4 @@
-module std::io;
-
-import "os/linux.bq";
+const linux = @import("os/linux.bq");
 
 // TODO: This is a temporary solution until we have a proper files implementation which must work on all platforms
 pub fn printfd(fd s32, str []const u8) {
@@ -9,11 +7,11 @@ pub fn printfd(fd s32, str []const u8) {
         str.len -= 1;
     }
 
-    std::os::linux::write(fd, str.ptr as usize, str.len);
+    linux.write(fd, str.ptr as usize, str.len);
 }
 
 pub fn print(str []const u8) {
-    printfd(std::os::linux::STDOUT, str);
+    printfd(linux.STDOUT, str);
 }
 
 // TODO: This is a temporary solution until we have a proper printing implementation
@@ -35,7 +33,7 @@ pub fn println(str []const u8) {
 }
 
 pub fn eprint(str []const u8) {
-    printfd(std::os::linux::STDERR, str);
+    printfd(linux.STDERR, str);
 }
 
 pub fn eprintln(str []const u8) {

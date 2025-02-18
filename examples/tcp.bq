@@ -1,99 +1,97 @@
-import "std/os/linux.bq";
-import "std/process.bq";
-import "std/io.bq";
+const std = @import("std");
 
 type Server = struct {
     fd s32,
 };
 
-fn Server::init(server *Server) {
-    std::io::print("creating socket.. ");
+fn server_init(server *Server) {
+    std.io.print("creating socket.. ");
 
-    if (server.fd = std::os::linux::socket(std::os::linux::AF_INET, std::os::linux::SOCK_STREAM, 0)) < 0 {
-        std::io::print("failure\n");
+    if (server.fd = std.os.linux.socket(std.os.linux.AF_INET, std.os.linux.SOCK_STREAM, 0)) < 0 {
+        std.io.print("failure\n");
 
-        std::process::exit(1);
+        std.process.exit(1);
     } else {    
-        std::io::print("success\n");
+        std.io.print("success\n");
     }
 
     var optlevel u32 = 1;
-    std::os::linux::setsockopt(server.fd, std::os::linux::SOL_SOCKET, std::os::linux::SO_REUSEADDR, &optlevel as usize, 4);
-    std::os::linux::setsockopt(server.fd, std::os::linux::SOL_SOCKET, std::os::linux::SO_REUSEPORT, &optlevel as usize, 4);
+    std.os.linux.setsockopt(server.fd, std.os.linux.SOL_SOCKET, std.os.linux.SO_REUSEADDR, &optlevel as usize, 4);
+    std.os.linux.setsockopt(server.fd, std.os.linux.SOL_SOCKET, std.os.linux.SO_REUSEPORT, &optlevel as usize, 4);
 
-    var address std::os::linux::sockaddr::in;
-    address.family = std::os::linux::AF_INET;
+    var address std.os.linux.sockaddr_in;
+    address.family = std.os.linux.AF_INET;
     address.port = 0x901f;
     address.addr = 0;
     (&address.zero as *u64).* = 0;
 
-    std::io::print("binding.. ");
+    std.io.print("binding.. ");
 
-    if std::os::linux::bind(server.fd, &address as *std::os::linux::sockaddr, 16) != 0 {
-        std::io::print("failure\n");
+    if std.os.linux.bind(server.fd, &address as *std.os.linux.sockaddr, 16) != 0 {
+        std.io.print("failure\n");
 
-        std::process::exit(1);
+        std.process.exit(1);
     } else {
-        std::io::print("success\n");
+        std.io.print("success\n");
     }
 
-    std::io::print("listening.. ");
+    std.io.print("listening.. ");
 
-    if std::os::linux::listen(server.fd, 5) != 0 {
-        std::io::print("failure\n");
+    if std.os.linux.listen(server.fd, 5) != 0 {
+        std.io.print("failure\n");
 
-        std::process::exit(1);
+        std.process.exit(1);
     } else {
-        std::io::print("success\n");
+        std.io.print("success\n");
     }
 }
 
 type Client = struct {
     fd s32,
-    address std::os::linux::sockaddr,
+    address std.os.linux.sockaddr,
 };
 
-fn Server::accept(server Server, client *Client) {
-    var address_len std::os::linux::socklen_t;
+fn server_accept(server Server, client *Client) {
+    var address_len std.os.linux.socklen_t;
 
-    std::io::print("accepting request.. ");
+    std.io.print("accepting request.. ");
 
-    if (client.fd = std::os::linux::accept(server.fd, &client.address, &address_len)) < 0 {
-        std::io::print("failure\n");
+    if (client.fd = std.os.linux.accept(server.fd, &client.address, &address_len)) < 0 {
+        std.io.print("failure\n");
 
-        std::process::exit(1);
+        std.process.exit(1);
     } else {    
-        std::io::print("success\n");
+        std.io.print("success\n");
     }
 }
 
-fn Client::close(client Client) {
-    std::os::linux::close(client.fd);
+fn client_close(client Client) {
+    std.os.linux.close(client.fd);
 }
 
 fn http(client Client) {
     var ch u8 = 0;
 
-    while std::os::linux::read(client.fd, &ch as usize, 1) == 1 {
+    while std.os.linux.read(client.fd, &ch as usize, 1) == 1 {
         if ch == '\n' {
-            std::os::linux::read(client.fd, &ch as usize, 1);
+            std.os.linux.read(client.fd, &ch as usize, 1);
 
             if ch == '\r' {
-                std::os::linux::read(client.fd, &ch as usize, 1);
+                std.os.linux.read(client.fd, &ch as usize, 1);
 
                 break;
             }
         }
     }
 
-    std::io::printfd(client.fd, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html\r\n\r\n<h1>Hello, World!</h1>\n");
+    std.io.printfd(client.fd, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html\r\n\r\n<h1>Hello, World!</h1>\n");
 }
 
 fn echo(client Client) {
     var ch u8 = 0;
 
-    while std::os::linux::read(client.fd, &ch as usize, 1) == 1 {
-        std::os::linux::write(client.fd, &ch as usize, 1);
+    while std.os.linux.read(client.fd, &ch as usize, 1) == 1 {
+        std.os.linux.write(client.fd, &ch as usize, 1);
     }
 }
 
@@ -101,14 +99,14 @@ pub fn main() {
     var server Server;
     var client Client;
 
-    Server::init(&server);
+    server_init(&server);
 
     while true {
-        Server::accept(server, &client);
+        server_accept(server, &client);
 
         http(client);
         // echo(client);
 
-        Client::close(client);
+        client_close(client);
     }
 }

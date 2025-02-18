@@ -7,15 +7,13 @@
 //                      with xlib and C runtime library and C math library
 //    i.e: `cc xlib_example.o -lX11 -o xlib_example`
 
-import "std/c/io.bq";
-import "std/c/time.bq";
-import "std/c/random.bq";
+const std = @import("std");
 
 export fn main() u8 {
     var display = XOpenDisplay(0 as [*]const u8);
 
     if (display as usize == 0) {
-        std::c::printf("failed to open display\n");
+        std.c.printf("failed to open display\n");
 
         return 1;
     }
@@ -35,17 +33,17 @@ export fn main() u8 {
 
     XMapWindow(display, window);
 
-    std::c::srand(std::c::time(0 as *std::c::time_t) as c_uint);
+    std.c.srand(std.c.time(0 as *std.c.time_t) as c_uint);
 
     while true {
         XGetGeometry(display, window, &root, &x, &y, &width, &height, &border_width, &depth);
 
-        XSetForeground(display, gc, (std::c::rand() % 0xFFFFFF) as c_ulong);
+        XSetForeground(display, gc, (std.c.rand() % 0xFFFFFF) as c_ulong);
 
         var i u16 = 0;
         
         while (i < 255 * 2) {
-            XDrawPoint(display, window, gc, std::c::rand() % width as c_int, std::c::rand() % height as c_int);
+            XDrawPoint(display, window, gc, std.c.rand() % width as c_int, std.c.rand() % height as c_int);
 
             i += 1;
         }

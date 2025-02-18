@@ -1,5 +1,5 @@
-import "std/io.bq";
+const std = @import("std");
 
 pub fn main() {
-    std::io::println("Hello, World!");
+    std.io.println("Hello, World!");
 }

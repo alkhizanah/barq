@@ -1,11 +1,8 @@
-module std::runner::exe;
+const root = @import("root");
 
-import "std/process.bq";
-
-import "root";
+const process = @import("../process.bq");
 
 export fn _start() {
-    root::main();
-
-    std::process::exit(0);
+    root.main();
+    process.exit(0);
 }
