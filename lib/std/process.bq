@@ -1,5 +1,5 @@
 const os = @import("os.bq");
 
-pub fn exit(status u8) {
+fn exit(status u8) {
     os.linux.exit_group(status);
 }

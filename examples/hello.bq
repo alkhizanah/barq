@@ -1,5 +1,5 @@
 const std = @import("std");
 
-pub fn main() {
+fn main() {
     std.io.println("Hello, World!");
 }

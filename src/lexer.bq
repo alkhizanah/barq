@@ -1,9 +1,9 @@
-pub type Token = struct {
+type Token = struct {
     tag TokenTag,
     range TokenRange,
 };
 
-pub type TokenTag = enum {
+type TokenTag = enum {
     eof,
     invalid,
     identifier,
@@ -56,17 +56,17 @@ pub type TokenTag = enum {
     assign,
 };
 
-pub type TokenRange = struct {
+type TokenRange = struct {
     start u32,
     end u32,
 };
 
-pub type Lexer = struct {
+type Lexer = struct {
     index u32,
     buffer [*]const u8,
 };
 
-type State = enum {
+type LexerState = enum {
     start,
     identifier,
     at_sign,
@@ -95,20 +95,20 @@ type State = enum {
     double_period,
 };
 
-pub fn next(self *Lexer) Token {
+fn next(self *Lexer) Token {
     var result Token;
 
     result.tag = TokenTag.eof;
     result.range.start = self.index;
     result.range.end = self.index;
 
-    var state State = State.start;
+    var state LexerState = LexerState.start;
 
     while true {
         var ch = self.buffer[self.index];
 
         switch (state) {
-            State.start => switch (ch) {
+            LexerState.start => switch (ch) {
                 0 => {
                     result.tag = TokenTag.eof;
                     result.range.start = self.index;
@@ -125,13 +125,13 @@ pub fn next(self *Lexer) Token {
                     result.tag = TokenTag.identifier;
                     result.range.start = self.index;
 
-                    state = State.identifier;
+                    state = LexerState.identifier;
                 },
 
                 '@' => {
                     result.range.start = self.index;
 
-                    state = State.at_sign;
+                    state = LexerState.at_sign;
                 },
 
                 '"' => {
@@ -139,7 +139,7 @@ pub fn next(self *Lexer) Token {
                     self.index += 1;
                     result.range.start = self.index;
 
-                    state = State.string_literal;
+                    state = LexerState.string_literal;
                 },
 
                 '\'' => {
@@ -147,14 +147,14 @@ pub fn next(self *Lexer) Token {
                     self.index += 1;
                     result.range.start = self.index;
 
-                    state = State.char_literal;
+                    state = LexerState.char_literal;
                 },
 
                 '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => {
                     result.tag = TokenTag.int;
                     result.range.start = self.index;
 
-                    state = State.number;
+                    state = LexerState.number;
                 },
 
                 '(' => {
@@ -224,14 +224,14 @@ pub fn next(self *Lexer) Token {
                     result.tag = TokenTag.assign;
                     result.range.start = self.index;
 
-                    state = State.assign;
+                    state = LexerState.assign;
                 },
 
                 '!' => {
                     result.tag = TokenTag.bool_not;
                     result.range.start = self.index;
 
-                    state = State.bool_not;
+                    state = LexerState.bool_not;
                 },
 
                 '~' => {
@@ -247,42 +247,42 @@ pub fn next(self *Lexer) Token {
                     result.tag = TokenTag.period;
                     result.range.start = self.index;
 
-                    state = State.period;
+                    state = LexerState.period;
                 },
 
                 '+' => {
                     result.tag = TokenTag.plus;
                     result.range.start = self.index;
 
-                    state = State.plus;
+                    state = LexerState.plus;
                 },
 
                 '-' => {
                     result.tag = TokenTag.minus;
                     result.range.start = self.index;
 
-                    state = State.minus;
+                    state = LexerState.minus;
                 },
 
                 '*' => {
                     result.tag = TokenTag.star;
                     result.range.start = self.index;
 
-                    state = State.star;
+                    state = LexerState.star;
                 },
 
                 '/' => {
                     result.tag = TokenTag.divide;
                     result.range.start = self.index;
 
-                    state = State.divide;
+                    state = LexerState.divide;
                 },
 
                 '%' => {
                     result.tag = TokenTag.modulo;
                     result.range.start = self.index;
 
-                    state = State.modulo;
+                    state = LexerState.modulo;
                 },
 
                 ',' => {
@@ -298,21 +298,21 @@ pub fn next(self *Lexer) Token {
                     result.tag = TokenTag.bit_and;
                     result.range.start = self.index;
 
-                    state = State.bit_and;
+                    state = LexerState.bit_and;
                 },
 
                 '|' => {
                     result.tag = TokenTag.bit_or;
                     result.range.start = self.index;
 
-                    state = State.bit_or;
+                    state = LexerState.bit_or;
                 },
 
                 '^' => {
                     result.tag = TokenTag.bit_xor;
                     result.range.start = self.index;
 
-                    state = State.bit_xor;
+                    state = LexerState.bit_xor;
                 },
 
                 ':' => {
@@ -328,14 +328,14 @@ pub fn next(self *Lexer) Token {
                     result.tag = TokenTag.less_than;
                     result.range.start = self.index;
 
-                    state = State.less_than;
+                    state = LexerState.less_than;
                 },
 
                 '>' => {
                     result.tag = TokenTag.greater_than;
                     result.range.start = self.index;
 
-                    state = State.greater_than;
+                    state = LexerState.greater_than;
                 },
 
                 else => {
@@ -348,7 +348,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.identifier => switch (ch) {
+            LexerState.identifier => switch (ch) {
                 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
                 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
                 '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
@@ -361,13 +361,13 @@ pub fn next(self *Lexer) Token {
                 },
             }, 
 
-            State.at_sign => switch (ch) {
+            LexerState.at_sign => switch (ch) {
                 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
                 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
                 '_' => {
                     result.range.start = self.index;
                     result.tag = TokenTag.special_identifier;
-                    state = State.identifier;
+                    state = LexerState.identifier;
                 },
 
                 else => {
@@ -378,7 +378,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.string_literal => switch (ch) {
+            LexerState.string_literal => switch (ch) {
                 0, '\n' => {
                     result.tag = TokenTag.invalid;
                     result.range.start = self.index;
@@ -396,13 +396,13 @@ pub fn next(self *Lexer) Token {
                 },
 
                 '\\' => {
-                    state = State.string_literal_back_slash;
+                    state = LexerState.string_literal_back_slash;
                 },
 
                 else => {},
             },
 
-            State.string_literal_back_slash => switch (ch) {
+            LexerState.string_literal_back_slash => switch (ch) {
                 0, '\n' => {
                     result.tag = TokenTag.invalid;
                     result.range.start = self.index;
@@ -413,11 +413,11 @@ pub fn next(self *Lexer) Token {
                 },
 
                 else => {
-                    state = State.string_literal;
+                    state = LexerState.string_literal;
                 },
             },
 
-            State.char_literal => switch (ch) {
+            LexerState.char_literal => switch (ch) {
                 0, '\n' => {
                     result.tag = TokenTag.invalid;
                     result.range.start = self.index;
@@ -428,7 +428,7 @@ pub fn next(self *Lexer) Token {
                 },
 
                 '\\' => {
-                    state = State.char_literal_back_slash;
+                    state = LexerState.char_literal_back_slash;
                 },
 
                 '\'' => {
@@ -442,7 +442,7 @@ pub fn next(self *Lexer) Token {
             },
 
 
-            State.char_literal_back_slash => switch (ch) {
+            LexerState.char_literal_back_slash => switch (ch) {
                 0, '\n' => {
                     result.tag = TokenTag.invalid;
                     result.range.start = self.index;
@@ -453,16 +453,16 @@ pub fn next(self *Lexer) Token {
                 },
 
                 else => {
-                    state = State.char_literal;
+                    state = LexerState.char_literal;
                 },
             },
 
-            State.number => switch (ch) {
+            LexerState.number => switch (ch) {
                 '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' => {},
 
                 '.' => {
                     result.tag = TokenTag.float;
-                    state = State.number_saw_period;
+                    state = LexerState.number_saw_period;
                 }, 
 
                 else => {
@@ -472,7 +472,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.number_saw_period => switch (ch) {
+            LexerState.number_saw_period => switch (ch) {
                 '.' => {
                     result.tag = TokenTag.int;
                     self.index -= 1;
@@ -482,13 +482,13 @@ pub fn next(self *Lexer) Token {
                 },
 
                 else => {
-                    state = State.number;
+                    state = LexerState.number;
 
                     continue;
                 },
             },
 
-            State.plus => switch (ch) {
+            LexerState.plus => switch (ch) {
                 '=' => {
                     self.index += 1;
                     result.range.end = self.index;
@@ -504,7 +504,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.minus => switch (ch) {
+            LexerState.minus => switch (ch) {
                 '=' => {
                     self.index += 1;
                     result.range.end = self.index;
@@ -520,7 +520,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.star => switch (ch) {
+            LexerState.star => switch (ch) {
                 '=' => {
                     self.index += 1;
                     result.range.end = self.index;
@@ -537,9 +537,9 @@ pub fn next(self *Lexer) Token {
             },
 
 
-            State.divide => switch (ch) {
+            LexerState.divide => switch (ch) {
                 '/' => {
-                    state = State.comment;
+                    state = LexerState.comment;
                 },
 
                 '=' => {
@@ -557,7 +557,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.modulo => switch (ch) {
+            LexerState.modulo => switch (ch) {
                 '=' => {
                     self.index += 1;
                     result.range.end = self.index;
@@ -573,10 +573,10 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.less_than => switch (ch) {
+            LexerState.less_than => switch (ch) {
                 '<' => {
                     result.tag = TokenTag.left_shift;
-                    state = State.left_shift;
+                    state = LexerState.left_shift;
                 },
 
                 '=' => {
@@ -594,10 +594,10 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.greater_than => switch (ch) {
+            LexerState.greater_than => switch (ch) {
                 '>' => {
                     result.tag = TokenTag.right_shift;
-                    state = State.right_shift;
+                    state = LexerState.right_shift;
                 },
 
                 '=' => {
@@ -615,7 +615,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.left_shift => switch (ch) {
+            LexerState.left_shift => switch (ch) {
                 '=' => {
                     self.index += 1;
                     result.range.end = self.index;
@@ -631,7 +631,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
             
-            State.right_shift => switch (ch) {
+            LexerState.right_shift => switch (ch) {
                 '=' => {
                     self.index += 1;
                     result.range.end = self.index;
@@ -647,7 +647,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.comment => switch (ch) {
+            LexerState.comment => switch (ch) {
                 0 => {
                     result.tag = TokenTag.eof;
                     result.range.start = self.index;
@@ -657,13 +657,13 @@ pub fn next(self *Lexer) Token {
                 },
 
                 '\n' => {
-                    state = State.start;
+                    state = LexerState.start;
                 },
 
                 else => {},
             },
 
-            State.assign => switch (ch) {
+            LexerState.assign => switch (ch) {
                 '=' => {
                     result.tag = TokenTag.eql;
                     self.index += 1;
@@ -687,7 +687,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.bool_not => switch (ch) {
+            LexerState.bool_not => switch (ch) {
                 '=' => {
                     result.tag = TokenTag.not_eql;
                     self.index += 1;
@@ -703,10 +703,10 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.period => switch (ch) {
+            LexerState.period => switch (ch) {
                 '.' => {
                     result.tag = TokenTag.double_period;
-                    state = State.double_period;
+                    state = LexerState.double_period;
                 },
 
                 else => {
@@ -716,7 +716,7 @@ pub fn next(self *Lexer) Token {
                 },
             },
 
-            State.double_period => switch (ch) {
+            LexerState.double_period => switch (ch) {
                 '.' => {
                     result.tag = TokenTag.triple_period;
                     self.index += 1;

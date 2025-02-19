@@ -1,6 +1,19 @@
 const std = @import("std");
 
-pub fn main() {
+// TODO: This is a temporary solution until we have a proper printing implementation
+fn print_n(n u64) {
+    if n > 9 {
+        print_n(n / 10);
+        n %= 10;
+    }
+
+    var buf [1]u8;
+    buf[0] = (n + '0') as u8;
+
+    std.io.print(buf[0..1]);
+}
+
+fn main() {
     var i u32 = 1;
 
     while i < 16 {
@@ -13,7 +26,7 @@ pub fn main() {
         } else if i % 5 == 0 {
             std.io.print("Buzz\n");
         } else {
-            std.io.numprint(i);
+            print_n(i);
             std.io.print("\n");
         }
 

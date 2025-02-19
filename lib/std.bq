@@ -1,6 +1,6 @@
-pub const c = @import("std/c.bq");
-pub const io = @import("std/io.bq");
-pub const math = @import("std/math.bq");
-pub const os = @import("std/os.bq");
-pub const process = @import("std/process.bq");
-pub const target = @import("std/target.bq");
+const c = @import("std/c.bq");
+const io = @import("std/io.bq");
+const math = @import("std/math.bq");
+const os = @import("std/os.bq");
+const process = @import("std/process.bq");
+const target = @import("std/target.bq");

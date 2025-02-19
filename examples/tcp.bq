@@ -95,7 +95,7 @@ fn echo(client Client) {
     }
 }
 
-pub fn main() {
+fn main() {
     var server Server;
     var client Client;
 

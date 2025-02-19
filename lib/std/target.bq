@@ -1,4 +1,4 @@
-pub type Os = enum {
+type Os = enum {
     freestanding,
     other,
 
@@ -58,7 +58,7 @@ pub type Os = enum {
     // - shadermodel
 };
 
-pub type Arch = enum {
+type Arch = enum {
     amdgcn,
     arc,
     arm,
@@ -127,7 +127,7 @@ pub type Arch = enum {
     // - tcele
 };
 
-pub type Abi = enum {
+type Abi = enum {
     none,
     gnu,
     gnuabin32,

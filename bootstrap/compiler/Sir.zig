@@ -262,7 +262,6 @@ pub const SubType = union(enum) {
 pub const SubSymbol = struct {
     name: Name,
     subtype: SubType,
-    visibility: Symbol.Visibility,
 };
 
 pub const Parser = struct {
@@ -353,17 +352,15 @@ pub const Parser = struct {
 
     fn parseTopLevelStmt(self: *Parser) Error!void {
         switch (self.peekToken().tag) {
-            .keyword_pub => return self.parsePublicDeclaration(),
+            .keyword_extern => try self.parseExternalDeclaration(),
 
-            .keyword_extern => try self.parseExternalDeclaration(.private),
+            .keyword_export => return self.parseExportDeclaration(),
 
-            .keyword_export => return self.parseExportDeclaration(.private),
+            .keyword_fn => return self.parseFunctionDeclaration(false, false),
 
-            .keyword_fn => return self.parseFunctionDeclaration(.private, false, false),
+            .keyword_const, .keyword_var => try self.parseVariableDeclaration(true, false, false),
 
-            .keyword_const, .keyword_var => try self.parseVariableDeclaration(.private, true, false, false),
-
-            .keyword_type => try self.parseTypeAlias(.private),
+            .keyword_type => try self.parseTypeAlias(),
 
             .keyword_asm => return self.parseGlobalAssembly(),
 
@@ -383,7 +380,7 @@ pub const Parser = struct {
 
     fn parseStmt(self: *Parser, expect_semicolon: bool) Error!void {
         switch (self.peekToken().tag) {
-            .keyword_const, .keyword_var => try self.parseVariableDeclaration(.private, false, false, false),
+            .keyword_const, .keyword_var => try self.parseVariableDeclaration(false, false, false),
 
             .keyword_switch => return self.parseSwitch(),
 
@@ -423,41 +420,13 @@ pub const Parser = struct {
         }
     }
 
-    fn parsePublicDeclaration(self: *Parser) Error!void {
+    fn parseExternalDeclaration(self: *Parser) Error!void {
         _ = self.nextToken();
 
         switch (self.peekToken().tag) {
-            .keyword_extern => try self.parseExternalDeclaration(.public),
+            .keyword_fn => try self.parseFunctionDeclaration(true, false),
 
-            .keyword_export => return self.parseExportDeclaration(.public),
-
-            .keyword_fn => return self.parseFunctionDeclaration(.public, false, false),
-
-            .keyword_const, .keyword_var => try self.parseVariableDeclaration(.public, true, false, false),
-
-            .keyword_type => try self.parseTypeAlias(.public),
-
-            else => {
-                self.error_info = .{ .message = "expected a top level declaration", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                return error.WithMessage;
-            },
-        }
-
-        if (!self.eatToken(.semicolon)) {
-            self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-    }
-
-    fn parseExternalDeclaration(self: *Parser, comptime visibility: Symbol.Visibility) Error!void {
-        _ = self.nextToken();
-
-        switch (self.peekToken().tag) {
-            .keyword_fn => try self.parseFunctionDeclaration(visibility, true, false),
-
-            .keyword_var => try self.parseVariableDeclaration(visibility, true, true, false),
+            .keyword_var => try self.parseVariableDeclaration(true, true, false),
 
             .keyword_const => {
                 self.error_info = .{ .message = "'const' is declaring a compile time constant and cannot be used with 'extern'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
@@ -473,13 +442,13 @@ pub const Parser = struct {
         }
     }
 
-    fn parseExportDeclaration(self: *Parser, comptime visibility: Symbol.Visibility) Error!void {
+    fn parseExportDeclaration(self: *Parser) Error!void {
         _ = self.nextToken();
 
         switch (self.peekToken().tag) {
-            .keyword_fn => try self.parseFunctionDeclaration(visibility, false, true),
+            .keyword_fn => try self.parseFunctionDeclaration(false, true),
 
-            .keyword_var => try self.parseVariableDeclaration(visibility, true, false, true),
+            .keyword_var => try self.parseVariableDeclaration(true, false, true),
 
             .keyword_const => {
                 self.error_info = .{ .message = "'const' is declaring a compile time constant and cannot be used with 'export'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
@@ -497,7 +466,6 @@ pub const Parser = struct {
 
     fn parseFunctionDeclaration(
         self: *Parser,
-        comptime visibility: Symbol.Visibility,
         comptime external: bool,
         comptime exported: bool,
     ) Error!void {
@@ -545,7 +513,6 @@ pub const Parser = struct {
         const subsymbol: SubSymbol = .{
             .name = name,
             .subtype = function_pointer_subtype,
-            .visibility = visibility,
         };
 
         if (external) {
@@ -615,7 +582,6 @@ pub const Parser = struct {
             try paramters.append(self.allocator, .{
                 .name = try self.parseName(),
                 .subtype = try self.parseSubType(),
-                .visibility = .private,
             });
 
             if (!self.eatToken(.comma) and self.peekToken().tag != .close_paren) {
@@ -630,7 +596,6 @@ pub const Parser = struct {
 
     fn parseVariableDeclaration(
         self: *Parser,
-        comptime visibility: Symbol.Visibility,
         comptime global: bool,
         comptime external: bool,
         comptime exported: bool,
@@ -649,7 +614,6 @@ pub const Parser = struct {
         const subsymbol: SubSymbol = .{
             .name = name,
             .subtype = maybe_subtype orelse .{ .pure = .void },
-            .visibility = visibility,
         };
 
         if (external) {
@@ -707,7 +671,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseTypeAlias(self: *Parser, comptime visibility: Symbol.Visibility) Error!void {
+    fn parseTypeAlias(self: *Parser) Error!void {
         _ = self.nextToken();
 
         const name = try self.parseName();
@@ -723,7 +687,6 @@ pub const Parser = struct {
         const subsymbol: SubSymbol = .{
             .name = name,
             .subtype = subtype,
-            .visibility = visibility,
         };
 
         const type_alias = try self.sir.type_aliases.getOrPutValue(self.allocator, name.buffer, subsymbol);
@@ -1928,7 +1891,6 @@ pub const Parser = struct {
                     try subsymbols.append(self.allocator, .{
                         .name = name,
                         .subtype = try self.parseSubType(),
-                        .visibility = .private,
                     });
 
                     if (!self.eatToken(.comma) and self.peekToken().tag != .close_brace) {

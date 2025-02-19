@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn main() {
+fn main() {
     var i u32 = 0;
 
     while i < 8 {
