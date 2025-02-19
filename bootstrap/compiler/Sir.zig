@@ -704,19 +704,7 @@ pub const Parser = struct {
     fn parseSwitch(self: *Parser) Error!void {
         const switch_keyword_start = self.nextToken().range.start;
 
-        if (!self.eatToken(.open_paren)) {
-            self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-
         try self.parseExpr(.lowest);
-
-        if (!self.eatToken(.close_paren)) {
-            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
 
         if (!self.eatToken(.open_brace)) {
             self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
