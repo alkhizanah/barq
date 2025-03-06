@@ -1,9 +1,9 @@
-type Token = struct {
-    tag TokenTag,
-    range TokenRange,
+Token :: struct {
+    tag: TokenTag,
+    range: TokenRange,
 };
 
-type TokenTag = enum {
+TokenTag :: enum {
     eof,
     invalid,
     identifier,
@@ -56,17 +56,17 @@ type TokenTag = enum {
     assign,
 };
 
-type TokenRange = struct {
-    start u32,
-    end u32,
+TokenRange :: struct {
+    start: u32,
+    end: u32,
 };
 
-type Lexer = struct {
-    index u32,
-    buffer [*]const u8,
+Lexer :: struct {
+    index: u32,
+    buffer: [*]const u8,
 };
 
-type LexerState = enum {
+LexerState :: enum {
     start,
     identifier,
     at_sign,
@@ -95,17 +95,17 @@ type LexerState = enum {
     double_period,
 };
 
-fn next(self *Lexer) Token {
-    var result Token;
+next :: fn (self: *Lexer) Token {
+    result: Token;
 
     result.tag = TokenTag.eof;
     result.range.start = self.index;
     result.range.end = self.index;
 
-    var state LexerState = LexerState.start;
+    state: LexerState = LexerState.start;
 
     while true {
-        var ch = self.buffer[self.index];
+        ch := self.buffer[self.index];
 
         switch state {
             LexerState.start => switch ch {

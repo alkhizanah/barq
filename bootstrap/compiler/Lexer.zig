@@ -32,6 +32,7 @@ pub const State = enum {
     comment,
     assign,
     bool_not,
+    colon,
     period,
     double_period,
 };
@@ -247,8 +248,8 @@ pub fn next(self: *Lexer) Token {
             ':' => {
                 result.range.start = self.index;
                 self.index += 1;
-                result.range.end = self.index;
                 result.tag = .colon;
+                continue :state .colon;
             },
 
             ';' => {
@@ -538,6 +539,24 @@ pub fn next(self: *Lexer) Token {
                 self.index += 1;
                 result.range.end = self.index;
                 result.tag = .not_eql;
+            },
+
+            else => {
+                result.range.end = self.index;
+            },
+        },
+
+        .colon => switch (self.buffer[self.index]) {
+            ':' => {
+                self.index += 1;
+                result.range.end = self.index;
+                result.tag = .double_colon;
+            },
+
+            '=' => {
+                self.index += 1;
+                result.range.end = self.index;
+                result.tag = .colon_assign;
             },
 
             else => {

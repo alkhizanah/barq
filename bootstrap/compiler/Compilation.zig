@@ -6,7 +6,10 @@ const std = @import("std");
 const root = @import("root");
 
 const Air = @import("Air.zig");
+const Range = @import("Range.zig");
 const Symbol = @import("Symbol.zig");
+const Scope = Symbol.Scope;
+const Type = Symbol.Type;
 const Sir = @import("Sir.zig");
 const Sema = @import("Sema.zig");
 
@@ -18,19 +21,84 @@ allocator: std.mem.Allocator,
 
 root_file: File,
 
-modules: std.StringArrayHashMapUnmanaged(Module) = .{},
-
 env: Environment,
+
+pool: Pool = .{},
+
+pub const Pool = struct {
+    modules: std.StringArrayHashMapUnmanaged(Module) = .{},
+    lazy_units: std.StringHashMapUnmanaged(LazyUnit) = .{},
+    types: std.ArrayHashMapUnmanaged(Type, void, Type.HashContext, false) = .{},
+    integers: std.AutoArrayHashMapUnmanaged(i128, void) = .{},
+    bytes: std.ArrayListUnmanaged(u8) = .{},
+
+    pub const Module = struct {
+        file: File,
+        scope: *Sema.Scope,
+    };
+
+    pub const LazyUnit = struct {
+        owner_id: u32,
+        token_start: u32,
+        type_instructions: []const Sir.Instruction,
+        value_instructions: []const Sir.Instruction,
+    };
+};
+
+pub inline fn getModulePtrFromId(self: Compilation, id: u32) *Compilation.Pool.Module {
+    return &self.pool.modules.values()[id];
+}
+
+pub inline fn putModule(self: *Compilation, module: Compilation.Pool.Module) std.mem.Allocator.Error!u32 {
+    return @intCast((try self.pool.modules.getOrPutValue(self.allocator, module.file.path, module)).index);
+}
+
+pub inline fn ensureTypesUnusedCapacity(self: *Compilation, additional_capacity: usize) std.mem.Allocator.Error!void {
+    try self.pool.types.ensureUnusedCapacity(self.allocator, additional_capacity);
+}
+
+pub inline fn putTypeAssumeCapacity(self: *Compilation, @"type": Type) u32 {
+    return @intCast((self.pool.types.getOrPutAssumeCapacity(@"type")).index);
+}
+
+pub inline fn putType(self: *Compilation, @"type": Type) std.mem.Allocator.Error!u32 {
+    return @intCast((try self.pool.types.getOrPut(self.allocator, @"type")).index);
+}
+
+pub inline fn getTypeFromId(self: Compilation, id: u32) Type {
+    return self.pool.types.keys()[id];
+}
+
+pub inline fn putInt(self: *Compilation, int: i128) std.mem.Allocator.Error!u32 {
+    return @intCast((try self.pool.integers.getOrPut(self.allocator, int)).index);
+}
+
+pub inline fn getIntFromId(self: Compilation, id: u32) i128 {
+    return self.pool.integers.keys()[id];
+}
+
+pub fn makeStringType(self: *Compilation, len: usize) std.mem.Allocator.Error!Type {
+    return Type{
+        .pointer = .{
+            .is_const = true,
+            .size = .one,
+            .child_type_id = try self.putType(.{
+                .array = .{
+                    .len_int_id = try self.putInt(len),
+                    .child_type_id = try self.putType(.{ .int = .{ .signedness = .unsigned, .bits = 8 } }),
+                },
+            }),
+        },
+    };
+}
+
+pub fn getStringFromRange(self: Compilation, range: Range) []const u8 {
+    return self.pool.bytes.items[range.start..range.end];
+}
 
 pub const File = struct {
     path: []const u8,
     buffer: [:0]const u8,
-};
-
-pub const Module = struct {
-    file: File,
-    sir: Sir,
-    scope: Symbol.Scope(Sema.Variable) = .{},
 };
 
 pub const Environment = struct {
@@ -92,13 +160,13 @@ pub fn init(allocator: std.mem.Allocator, root_file: File, env: Environment) Com
 }
 
 pub fn emit(
-    self: Compilation,
+    self: *Compilation,
     air: Air,
     output_file_path: [:0]const u8,
     output_kind: root.OutputKind,
     code_model: root.CodeModel,
 ) std.mem.Allocator.Error!void {
-    var backend = try LlvmBackend.init(self.allocator, &self);
+    var backend = try LlvmBackend.init(self.allocator, self);
     defer backend.deinit();
 
     try backend.render(air);

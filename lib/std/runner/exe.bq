@@ -1,8 +1,8 @@
-const root = @import("root");
+root :: @import("root");
 
-const process = @import("../process.bq");
+process :: @import("../process.bq");
 
-export fn _start() {
+_start :: fn () @foreign("_start") {
     root.main();
     process.exit(0);
 }

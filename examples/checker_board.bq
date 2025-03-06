@@ -1,10 +1,10 @@
-const std = @import("std");
+std :: @import("std");
 
-fn main() {
-    var i u32 = 0;
+main :: fn () {
+    i : u32 = 0;
 
     while i < 8 {
-        var j u32 = 0;
+        j : u32 = 0;
 
         while j < 8 {
             if (i + j) % 2 == 0 {

@@ -1,6 +1,6 @@
-const c = @import("std/c.bq");
-const io = @import("std/io.bq");
-const math = @import("std/math.bq");
-const os = @import("std/os.bq");
-const process = @import("std/process.bq");
-const target = @import("std/target.bq");
+c :: @import("std/c.bq");
+io :: @import("std/io.bq");
+math :: @import("std/math.bq");
+os :: @import("std/os.bq");
+process :: @import("std/process.bq");
+target :: @import("std/target.bq");

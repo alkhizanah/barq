@@ -6,11 +6,14 @@ const Air = @import("compiler/Air.zig");
 const Sema = @import("compiler/Sema.zig");
 const Sir = @import("compiler/Sir.zig");
 
+pub const std_options: std.Options = .{
+    .fmt_max_depth = 10000000000,
+};
+
 pub const OutputKind = enum {
     assembly,
     object,
     executable,
-    ir,
     none,
 };
 
@@ -54,7 +57,7 @@ pub const Cli = struct {
                 \\Options:
                 \\  --output <output-file-path>    -- specify the output file path
                 \\  --emit <output-kind>           -- specify the output kind
-                \\                                    [assembly, object, executable (default), ir, none]
+                \\                                    [assembly, object, executable (default), none]
                 \\  --runner <runner-kind>         -- specify the runner kind
                 \\                                    [executable (default), none]
                 \\  --target <arch-os-abi>         -- specify the target query
@@ -156,8 +159,6 @@ pub const Cli = struct {
             return .object;
         } else if (std.mem.eql(u8, raw_output_kind, "executable")) {
             return .executable;
-        } else if (std.mem.eql(u8, raw_output_kind, "ir")) {
-            return .ir;
         } else if (std.mem.eql(u8, raw_output_kind, "none")) {
             return .none;
         } else {
@@ -488,7 +489,7 @@ pub const Cli = struct {
             .none => .{ .path = root_file_path, .buffer = root_file_buffer },
         };
 
-        var sir_parser = Sir.Parser.init(self.allocator, compilation.env, compilation_file) catch |err| {
+        var sir_parser = Sir.Parser.init(self.allocator, &compilation, compilation_file) catch |err| {
             std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 
             return 1;
@@ -517,25 +518,20 @@ pub const Cli = struct {
             error.WithoutMessage => {},
         };
 
-        const module_id = (compilation.modules.getOrPutValue(self.allocator, compilation_file.path, .{
+        var scope: Sema.Scope = .{};
+
+        const module_id = compilation.putModule(.{
             .file = compilation_file,
-            .sir = sir_parser.sir,
+            .scope = &scope,
         }) catch |err| {
             std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 
             return 1;
-        }).index;
+        };
 
         var air: Air = .{};
-        var lazy_units: Sema.LazyUnits = .{};
 
-        var sema = Sema.init(
-            self.allocator,
-            &compilation,
-            @intCast(module_id),
-            &air,
-            &lazy_units,
-        ) catch |err| {
+        var sema = Sema.init(self.allocator, &compilation, @intCast(module_id), &air) catch |err| {
             std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 
             return 1;
@@ -543,7 +539,7 @@ pub const Cli = struct {
 
         defer sema.deinit();
 
-        sema.analyze() catch |err| switch (err) {
+        sema.analyze(sir_parser.sir) catch |err| switch (err) {
             error.OutOfMemory => {
                 std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 
@@ -563,8 +559,6 @@ pub const Cli = struct {
 
             error.WithoutMessage => return 1,
         };
-
-        sir_parser.sir.deinit(self.allocator);
 
         switch (output_kind) {
             .assembly => {
@@ -629,31 +623,6 @@ pub const Cli = struct {
                         return 1;
                     };
                 }
-            },
-
-            .ir => {
-                const ir_file_path = std.fmt.allocPrintZ(self.allocator, "{s}{s}", .{
-                    maybe_output_file_path orelse std.fs.path.stem(root_file_path),
-                    if (maybe_output_file_path != null and output_kind == .object) "" else ".air",
-                }) catch |err| {
-                    std.debug.print("Error: {s}\n", .{errorDescription(err)});
-
-                    return 1;
-                };
-
-                defer self.allocator.free(ir_file_path);
-
-                const ir_file = std.fs.cwd().createFile(ir_file_path, .{}) catch |err| {
-                    std.debug.print("Error: could not create intermediate representation file: {s}\n", .{errorDescription(err)});
-
-                    return 1;
-                };
-
-                Air.passes.format.print(ir_file.writer(), air) catch |err| {
-                    std.debug.print("Error: could not emit intermediate representation: {s}\n", .{errorDescription(err)});
-
-                    return 1;
-                };
             },
 
             .none => {},

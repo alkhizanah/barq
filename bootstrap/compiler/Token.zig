@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const Range = @import("Range.zig");
+
 tag: Tag,
 range: Range,
 
@@ -23,6 +25,7 @@ pub const Tag = enum(u8) {
     double_period,
     triple_period,
     colon,
+    double_colon,
     semicolon,
     fat_arrow,
     plus,
@@ -44,6 +47,7 @@ pub const Tag = enum(u8) {
     eql,
     not_eql,
     assign,
+    colon_assign,
     plus_assign,
     minus_assign,
     star_assign,
@@ -54,16 +58,11 @@ pub const Tag = enum(u8) {
     bit_xor_assign,
     left_shift_assign,
     right_shift_assign,
+    keyword_const,
     keyword_defer,
     keyword_struct,
     keyword_enum,
-    keyword_pub,
-    keyword_extern,
-    keyword_export,
     keyword_fn,
-    keyword_var,
-    keyword_const,
-    keyword_type,
     keyword_switch,
     keyword_if,
     keyword_else,
@@ -75,22 +74,12 @@ pub const Tag = enum(u8) {
     keyword_return,
 };
 
-pub const Range = packed struct(u64) {
-    start: u32,
-    end: u32,
-};
-
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
+    .{ "const", .keyword_const },
     .{ "defer", .keyword_defer },
     .{ "struct", .keyword_struct },
     .{ "enum", .keyword_enum },
-    .{ "pub", .keyword_pub },
-    .{ "extern", .keyword_extern },
-    .{ "export", .keyword_export },
     .{ "fn", .keyword_fn },
-    .{ "var", .keyword_var },
-    .{ "const", .keyword_const },
-    .{ "type", .keyword_type },
     .{ "switch", .keyword_switch },
     .{ "if", .keyword_if },
     .{ "else", .keyword_else },

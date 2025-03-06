@@ -2,6 +2,7 @@ const std = @import("std");
 
 const Name = @import("Sir.zig").Name;
 const Compilation = @import("Compilation.zig");
+const Range = @import("Range.zig");
 
 const Symbol = @This();
 
@@ -11,12 +12,13 @@ type: Type,
 pub const Type = union(enum) {
     void,
     bool,
-    module,
+    type,
     int: Int,
     float: Float,
     pointer: Pointer,
     function: Function,
     @"struct": Struct,
+    @"enum": Enum,
     array: Array,
 
     pub const Int = struct {
@@ -36,7 +38,7 @@ pub const Type = union(enum) {
     pub const Pointer = struct {
         size: Size,
         is_const: bool,
-        child_type: *const Type,
+        child_type_id: u32,
 
         pub const Size = enum {
             one,
@@ -46,23 +48,45 @@ pub const Type = union(enum) {
     };
 
     pub const Function = struct {
-        parameter_types: []const Type,
+        parameter_type_ids: []u32,
         is_var_args: bool,
-        return_type: *const Type,
+        return_type_id: u32,
     };
 
     pub const Struct = struct {
-        fields: []const Field,
+        fields: []Field,
 
         pub const Field = struct {
             name: []const u8,
-            type: Type,
+            type_id: u32,
+        };
+    };
+
+    pub const Enum = struct {
+        backing_type_id: u32,
+        fields: []Field,
+
+        pub const Field = struct {
+            name: []const u8,
+            int_id: u32,
         };
     };
 
     pub const Array = struct {
-        len: usize,
-        child_type: *const Type,
+        len_int_id: u32,
+        child_type_id: u32,
+    };
+
+    pub const HashContext = struct {
+        pub fn hash(_: HashContext, key: Type) u32 {
+            var hasher = std.hash.Wyhash.init(0);
+            std.hash.autoHashStrat(&hasher, key, .DeepRecursive);
+            return @truncate(hasher.final());
+        }
+
+        pub fn eql(_: HashContext, key: Type, other_key: Type, _: usize) bool {
+            return std.meta.eql(key, other_key);
+        }
     };
 
     pub fn minInt(self: Type) i128 {
@@ -134,34 +158,6 @@ pub const Type = union(enum) {
             Type{ .float = .{ .bits = 64 } };
     }
 
-    var string_array_types: std.AutoHashMapUnmanaged(usize, Type) = .{};
-
-    pub fn string(len: usize) Type {
-        const array_type_on_heap = blk: {
-            const array_type_entry = string_array_types.getOrPutValue(
-                std.heap.page_allocator, // We use page allocator beacuse passing an allocator in here
-                // would break in multiple places, and painful to fix
-                len,
-                .{
-                    .array = .{
-                        .len = len,
-                        .child_type = &.{ .int = .{ .signedness = .unsigned, .bits = 8 } },
-                    },
-                },
-            ) catch @panic("OOM"); // This is not ideal to handle out of memory
-
-            break :blk array_type_entry.value_ptr;
-        };
-
-        return Type{
-            .pointer = .{
-                .size = .one,
-                .is_const = true,
-                .child_type = array_type_on_heap,
-            },
-        };
-    }
-
     pub fn canBeNegative(self: Type) bool {
         return switch (self) {
             .float => true,
@@ -186,10 +182,12 @@ pub const Type = union(enum) {
         return self.@"struct";
     }
 
-    pub fn getFunction(self: Type) ?Type.Function {
+    pub fn getFunction(self: Type, compilation: Compilation) ?Type.Function {
         if (self.getPointer()) |pointer| {
-            if (pointer.child_type.* == .function) {
-                return pointer.child_type.function;
+            const child_type = compilation.getTypeFromId(pointer.child_type_id);
+
+            if (child_type == .function) {
+                return child_type.function;
             } else {
                 return null;
             }
@@ -202,16 +200,22 @@ pub const Type = union(enum) {
         return self.function;
     }
 
-    pub fn format(self: Type, _: anytype, _: anytype, writer: anytype) !void {
+    pub fn format(self: Type, compilation: Compilation, writer: anytype) !void {
         switch (self) {
             .void => try writer.writeAll("void"),
             .bool => try writer.writeAll("bool"),
-            .module => try writer.writeAll("module"),
+            .type => try writer.writeAll("type"),
 
             .int => |int| try writer.print("{c}{}", .{ if (int.signedness == .unsigned) @as(u8, 'u') else @as(u8, 's'), int.bits }),
             .float => |float| try writer.print("f{}", .{float.bits}),
 
-            .array => |array| try writer.print("[{}]{}", .{ array.len, array.child_type }),
+            .array => |array| {
+                try writer.print("[{}]", .{compilation.getIntFromId(array.len_int_id)});
+
+                const child_type = compilation.getTypeFromId(array.child_type_id);
+
+                try child_type.format(compilation, writer);
+            },
 
             .pointer => |pointer| {
                 if (pointer.size == .one) {
@@ -226,64 +230,62 @@ pub const Type = union(enum) {
                     try writer.writeAll("const ");
                 }
 
-                try writer.print("{}", .{pointer.child_type});
+                const child_type = compilation.getTypeFromId(pointer.child_type_id);
+
+                try child_type.format(compilation, writer);
             },
 
             .function => |function| {
                 try writer.writeAll("fn (");
 
-                for (function.parameter_types, 0..) |parameter, i| {
-                    try writer.print("{}", .{parameter});
+                for (function.parameter_type_ids, 0..) |parameter_type_id, i| {
+                    const parameter_type = compilation.getTypeFromId(parameter_type_id);
 
-                    if (i < function.parameter_types.len - 1) {
+                    try parameter_type.format(compilation, writer);
+
+                    if (i < function.parameter_type_ids.len - 1) {
                         try writer.writeAll(", ");
                     }
                 }
 
-                try writer.print(") {}", .{function.return_type});
+                try writer.writeAll(") ");
+
+                const return_type = compilation.getTypeFromId(function.return_type_id);
+
+                try return_type.format(compilation, writer);
             },
 
             .@"struct" => |@"struct"| {
                 try writer.writeAll("struct { ");
 
                 for (@"struct".fields, 0..) |field, i| {
-                    var recursive = false;
+                    try writer.print("{s} ", .{field.name});
 
-                    if (field.type.getPointer()) |pointer| {
-                        if (pointer.child_type.getStruct()) |child_struct| {
-                            for (child_struct.fields) |child_field|
-                                if ((child_field.type == .pointer and child_field.type.pointer.child_type.eql(self)) or
-                                    child_field.type.eql(self))
-                                {
-                                    recursive = true;
-                                    break;
-                                };
-                        } else if (pointer.child_type.eql(self)) {
-                            recursive = true;
-                        }
-                    }
+                    const field_type = compilation.getTypeFromId(field.type_id);
 
-                    if (recursive) {
-                        try writer.print("{s} ", .{field.name});
-
-                        const pointer = field.type.pointer;
-
-                        if (pointer.size == .one) {
-                            try writer.writeAll("*");
-                        } else if (pointer.size == .many) {
-                            try writer.writeAll("[*]");
-                        }
-
-                        if (pointer.is_const) {
-                            try writer.writeAll("const ");
-                        }
-
-                        try writer.writeAll("{...}");
-                    } else {
-                        try writer.print("{s} {}", .{ field.name, field.type });
-                    }
+                    try field_type.format(compilation, writer);
 
                     if (i < @"struct".fields.len - 1) {
+                        try writer.writeAll(", ");
+                    }
+                }
+
+                try writer.writeAll(" }");
+            },
+
+            .@"enum" => |@"enum"| {
+                try writer.writeAll("enum ");
+
+                const backing_type = compilation.getTypeFromId(@"enum".backing_type_id);
+
+                try backing_type.format(compilation, writer);
+
+                try writer.writeAll(" { ");
+
+                for (@"enum".fields, 0..) |field, i| {
+                    try writer.print("{s}", .{field.name});
+
+                    if (i < @"enum".fields.len - 1) {
                         try writer.writeAll(", ");
                     }
                 }
@@ -293,42 +295,50 @@ pub const Type = union(enum) {
         }
     }
 
-    pub fn eql(self: Type, other: Type) bool {
+    pub fn eql(self: Type, compilation: Compilation, other: Type) bool {
         if (self.getPointer()) |pointer| {
             const other_pointer = other.getPointer() orelse return false;
 
+            const my_child_type = compilation.getTypeFromId(pointer.child_type_id);
+            const other_child_type = compilation.getTypeFromId(other_pointer.child_type_id);
+
             return ((!pointer.is_const and other_pointer.is_const) or pointer.is_const == other_pointer.is_const) and
                 pointer.size == other_pointer.size and
-                pointer.child_type.eql(other_pointer.child_type.*);
-        } else if (self.getFunction()) |function| {
-            const other_function = other.getFunction() orelse return false;
+                my_child_type.eql(compilation, other_child_type);
+        } else if (self.getFunction(compilation)) |function| {
+            const other_function = other.getFunction(compilation) orelse return false;
 
-            if (function.parameter_types.len != other_function.parameter_types.len) return false;
+            if (function.parameter_type_ids.len != other_function.parameter_type_ids.len) return false;
 
-            for (function.parameter_types, other_function.parameter_types) |parameter, other_parameter|
-                if (!parameter.eql(other_parameter)) return false;
+            for (function.parameter_type_ids, other_function.parameter_type_ids) |my_parameter_type_id, other_parameter_type_id| {
+                const my_parameter_type = compilation.getTypeFromId(my_parameter_type_id);
+                const other_parameter_type = compilation.getTypeFromId(other_parameter_type_id);
 
-            return function.return_type.eql(other_function.return_type.*);
+                if (!my_parameter_type.eql(compilation, other_parameter_type)) return false;
+            }
+
+            const my_return_type = compilation.getTypeFromId(function.return_type_id);
+            const other_return_type = compilation.getTypeFromId(other_function.return_type_id);
+
+            return my_return_type.eql(compilation, other_return_type);
         } else if (self.getArray()) |array| {
             const other_array = other.getArray() orelse return false;
 
-            return array.len == other_array.len and
-                array.child_type.eql(other_array.child_type.*);
+            const my_child_type = compilation.getTypeFromId(array.child_type_id);
+            const other_child_type = compilation.getTypeFromId(other_array.child_type_id);
+
+            return compilation.getIntFromId(array.len_int_id) == compilation.getIntFromId(other_array.len_int_id) and
+                my_child_type.eql(compilation, other_child_type);
         } else if (self.getStruct()) |@"struct"| {
             const other_struct = other.getStruct() orelse return false;
 
             if (@"struct".fields.len != other_struct.fields.len) return false;
 
             for (@"struct".fields, other_struct.fields) |field, other_field| {
-                if (field.type.getPointer()) |pointer|
-                    if (other_field.type.getPointer()) |other_pointer| {
-                        if (pointer.child_type == other_pointer.child_type)
-                            continue;
-                    } else {
-                        return false;
-                    };
+                const my_field_type = compilation.getTypeFromId(field.type_id);
+                const other_field_type = compilation.getTypeFromId(other_field.type_id);
 
-                if (!field.type.eql(other_field.type)) return false;
+                if (!my_field_type.eql(compilation, other_field_type)) return false;
             }
 
             return true;
@@ -390,8 +400,8 @@ pub fn Scope(comptime V: type) type {
             return null;
         }
 
-        pub fn getOrPut(self: *Self, allocator: std.mem.Allocator, name: []const u8) std.mem.Allocator.Error!std.StringHashMapUnmanaged(V).GetOrPutResult {
-            return self.items.getOrPut(allocator, name);
+        pub fn remove(self: *Self, name: []const u8) bool {
+            return self.items.remove(name);
         }
 
         pub fn ensureTotalCapacity(self: *Self, allocator: std.mem.Allocator, new_capacity: u32) std.mem.Allocator.Error!void {

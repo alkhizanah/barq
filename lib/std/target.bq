@@ -1,4 +1,4 @@
-type Os = enum {
+Os :: enum {
     freestanding,
     other,
 
@@ -56,9 +56,9 @@ type Os = enum {
     // - kfreebsd
     // - nacl
     // - shadermodel
-};
+}
 
-type Arch = enum {
+Arch :: enum {
     amdgcn,
     arc,
     arm,
@@ -125,9 +125,9 @@ type Arch = enum {
     // - spir64
     // - tce
     // - tcele
-};
+}
 
-type Abi = enum {
+Abi :: enum {
     none,
     gnu,
     gnuabin32,
@@ -176,4 +176,4 @@ type Abi = enum {
     // - pixel
     // - raygeneration
     // - vertex
-};
+}

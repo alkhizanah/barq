@@ -1,5 +1,5 @@
-const os = @import("os.bq");
+os :: @import("os.bq");
 
-fn exit(status u8) {
+exit :: fn (status: u8) {
     os.linux.exit_group(status);
 }

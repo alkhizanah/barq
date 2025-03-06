@@ -11,21 +11,33 @@ const Lexer = @import("Lexer.zig");
 const Symbol = @import("Symbol.zig");
 const Scope = Symbol.Scope;
 const Type = Symbol.Type;
+const Range = @import("Range.zig");
 const Token = @import("Token.zig");
 
 const Sir = @This();
 
 global_assembly: std.ArrayListUnmanaged(u8) = .{},
-external_declarations: std.ArrayListUnmanaged(SubSymbol) = .{},
-type_aliases: std.StringArrayHashMapUnmanaged(SubSymbol) = .{},
-global_constants: std.StringArrayHashMapUnmanaged(Definition) = .{},
-global_variables: std.StringArrayHashMapUnmanaged(Definition) = .{},
-functions: std.StringArrayHashMapUnmanaged(Definition) = .{},
 
-pub const Definition = struct {
-    exported: bool,
-    subsymbol: SubSymbol,
-    instructions: std.ArrayListUnmanaged(Instruction) = .{},
+instructions: std.ArrayListUnmanaged(Instruction) = .{},
+
+variables: std.StringArrayHashMapUnmanaged(Variable) = .{},
+constants: std.StringArrayHashMapUnmanaged(Constant) = .{},
+
+pub const Variable = struct {
+    /// The start of where this variable has been defined at, inside of the source code
+    token_start: u32,
+    /// A range of instructions that when evaluated by the semantic analyzer, it would get this variable's type, if this is empty then semantic
+    /// analyzer should try inferring the type
+    type_instructions: Range,
+    /// A range of instructions that when evaluated by the semantic analyzer, it would get this variable's value
+    value_instructions: Range,
+};
+
+pub const Constant = struct {
+    /// The start of where this constant has been defined at, inside of the source code
+    token_start: u32,
+    /// A range of instructions that when evaluated by the semantic analyzer, it would get this constant's value
+    value_instructions: Range,
 };
 
 pub const Instruction = union(enum) {
@@ -33,14 +45,31 @@ pub const Instruction = union(enum) {
     duplicate,
     /// Reverse the stack into nth depth
     reverse: u32,
+    /// Same as `reverse` but don't emit air instruction
+    comptime_reverse: u32,
     /// Pop the top of the stack
     pop,
     /// Push a string onto the stack
-    string: []const u8,
+    string: Range,
     /// Push an integer onto the stack
-    int: i128,
+    int: u32,
     /// Push a float onto the stack
     float: f64,
+    /// Push a function value onto stack, function type should be on the stack
+    function: Function,
+    /// Push an array type onto stack, array length and child type should be on the stack
+    array_type: u32,
+    /// Push a pointer type onto stack, child type should be on the stack
+    pointer_type: PointerType,
+    /// Push a struct type onto stack, provides the name of each field and the type of each field should be on the stack
+    struct_type: StructType,
+    /// Push an enum type onto stack, provides the fields and the type of its fields should be on the stack, if it isn't on the stack
+    /// then the semantic analyzer should try inferring the type
+    enum_type: EnumType,
+    /// Push a function type onto stack, return type and parameter types should be on the stack
+    function_type: FunctionType,
+    /// Declare function parameters, type of these parameters should already be known in the function type
+    parameters: []Name,
     /// Negate an integer or float on the top of the stack
     negate: u32,
     /// Reverse a boolean from true to false and from false to true
@@ -83,23 +112,23 @@ pub const Instruction = union(enum) {
     shl: u32,
     /// Shift to right the bits of lhs using rhs offset
     shr: u32,
-    /// Cast a value to a different type
-    cast: Cast,
+    /// Cast a value to a different type, both the value and its `to` type should already be on the stack
+    cast: u32,
     /// Import a module and push it on the stack, also pops the module file path from the stack
     import: u32,
     /// Place a machine-specific inline assembly in the output
     inline_assembly: InlineAssembly,
     /// Call a function pointer on the stack
     call: Call,
-    /// Declare function parameters
-    parameters: []const SubSymbol,
+    /// Declare a variable that is only known at runtime and doesn't get replaced by the compiler, type of this variable should already be
+    /// on top of the stack which have to be popped before `set` instruction is executed
+    variable: Name,
+    /// Same as `variable` but the type is not on the top of the stack, and should be inferred by the semantic analyzer
+    variable_infer: Name,
     /// Define a constant that is replaced at compile time and acts as a placeholder for a value
-    /// Pops the value from the stack and doesn't need `set` instruction after it unlike `variable`
-    constant: SubSymbol,
-    /// Declare a variable that is only known at runtime and doesn't get replaced by the compiler
-    variable: SubSymbol,
-    /// Same as `variable` but the type is unknown at the point of declaration
-    variable_infer: SubSymbol,
+    /// Pops the value from the stack and doesn't need `set` instruction after it unlike `variable` which doesn't pop the value
+    /// and needs `set` instruction after it
+    constant: Name,
     /// Set a variable with a value on top of the stack
     set: Name,
     /// Get a value of a variable
@@ -129,22 +158,42 @@ pub const Instruction = union(enum) {
     /// Return out of the function without a value
     ret_void: u32,
 
-    pub const Cast = struct {
-        to: SubType,
+    pub const PointerType = struct {
+        size: Type.Pointer.Size,
+        is_const: bool,
+        token_start: u32,
+    };
+
+    pub const StructType = struct {
+        fields: []Name,
+        token_start: u32,
+    };
+
+    pub const EnumType = struct {
+        fields: []Type.Enum.Field,
+        token_start: u32,
+    };
+
+    pub const FunctionType = struct {
+        parameters_count: usize,
+        is_var_args: bool,
+        token_start: u32,
+    };
+
+    pub const Function = struct {
+        maybe_named: ?Name = null,
+        maybe_foreign: ?Range = null,
+        instructions: []Instruction,
         token_start: u32,
     };
 
     pub const InlineAssembly = struct {
         content: []const u8,
-        output_constraint: ?OutputConstraint,
-        input_constraints: []const []const u8,
-        clobbers: []const []const u8,
+        /// If output_constraint is not null, its type would be on the stack before this instruction
+        output_constraint: ?Range,
+        input_constraints: []Range,
+        clobbers: []Range,
         token_start: u32,
-
-        pub const OutputConstraint = struct {
-            register: []const u8,
-            subtype: SubType,
-        };
     };
 
     pub const Call = struct {
@@ -159,29 +208,12 @@ pub const Instruction = union(enum) {
     };
 
     pub const Switch = struct {
-        case_block_ids: []const u32,
-        case_token_starts: []const u32,
+        case_block_ids: []u32,
+        case_token_starts: []u32,
         else_block_id: u32,
         token_start: u32,
     };
 };
-
-pub fn deinit(self: *Sir, allocator: std.mem.Allocator) void {
-    for (self.global_variables.values()) |*global_variable| {
-        global_variable.instructions.deinit(allocator);
-    }
-
-    for (self.functions.values()) |*function| {
-        function.instructions.deinit(allocator);
-    }
-
-    self.global_assembly.deinit(allocator);
-    self.external_declarations.deinit(allocator);
-    self.global_constants.deinit(allocator);
-    self.global_variables.deinit(allocator);
-    self.type_aliases.deinit(allocator);
-    self.functions.deinit(allocator);
-}
 
 pub const SourceLoc = struct {
     line: u32 = 1,
@@ -213,70 +245,21 @@ pub const Name = struct {
     token_start: u32,
 };
 
-/// A first concept of a type and should be resolved later by the semantic analyzer
-pub const SubType = union(enum) {
-    name: Name,
-    /// A chained set of names: "std.c.time_t"
-    chained_names: []const Name,
-    function: Function,
-    pointer: Pointer,
-    @"struct": Struct,
-    @"enum": Enum,
-    array: Array,
-    pure: Type,
-
-    pub const Function = struct {
-        parameter_subtypes: []const SubType,
-        is_var_args: bool,
-        return_subtype: *const SubType,
-    };
-
-    pub const Pointer = struct {
-        size: Type.Pointer.Size,
-        is_const: bool,
-        child_subtype: *const SubType,
-    };
-
-    pub const Struct = struct {
-        subsymbols: []const SubSymbol,
-    };
-
-    pub const Enum = struct {
-        subtype: *const SubType,
-        fields: []const Field,
-        token_start: u32,
-
-        pub const Field = struct {
-            name: Name,
-            value: i128,
-        };
-    };
-
-    pub const Array = struct {
-        len: usize,
-        child_subtype: *const SubType,
-    };
-};
-
-/// A first concept of a symbol and should be resolved later by the semantic analyzer
-pub const SubSymbol = struct {
-    name: Name,
-    subtype: SubType,
-};
-
 pub const Parser = struct {
     allocator: std.mem.Allocator,
 
-    env: Compilation.Environment,
+    compilation: *Compilation,
 
     file: Compilation.File,
 
     tokens: std.MultiArrayList(Token).Slice,
-    token_index: u32,
+    token_index: u32 = 0,
 
     sir: Sir = .{},
 
-    sir_instructions: *std.ArrayListUnmanaged(Instruction) = undefined,
+    target_os_int_id: u32,
+    target_arch_int_id: u32,
+    target_abi_int_id: u32,
 
     block_id: u32 = 0,
 
@@ -292,7 +275,7 @@ pub const Parser = struct {
 
     pub const Error = error{ WithMessage, WithoutMessage } || std.mem.Allocator.Error;
 
-    pub fn init(allocator: std.mem.Allocator, env: Compilation.Environment, file: Compilation.File) std.mem.Allocator.Error!Parser {
+    pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, file: Compilation.File) std.mem.Allocator.Error!Parser {
         var tokens: std.MultiArrayList(Token) = .{};
 
         // Tokens should have a lowering rate of 2 to 1, we use that estimate to avoid reallocation
@@ -310,10 +293,12 @@ pub const Parser = struct {
 
         return Parser{
             .allocator = allocator,
-            .env = env,
+            .compilation = compilation,
             .file = file,
             .tokens = tokens.toOwnedSlice(),
-            .token_index = 0,
+            .target_os_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.env.target.os.tag))),
+            .target_arch_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.env.target.cpu.arch))),
+            .target_abi_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.env.target.abi))),
         };
     }
 
@@ -321,18 +306,26 @@ pub const Parser = struct {
         self.tokens.deinit(self.allocator);
     }
 
-    fn nextToken(self: *Parser) Token {
+    fn advance(self: *Parser) void {
         self.token_index += 1;
-        return self.tokens.get(self.token_index - 1);
     }
 
-    pub fn peekToken(self: Parser) Token {
-        return self.tokens.get(self.token_index);
+    fn tokenTag(self: Parser) Token.Tag {
+        return self.tokens.items(.tag)[self.token_index];
     }
 
-    fn eatToken(self: *Parser, tag: Token.Tag) bool {
-        if (self.peekToken().tag == tag) {
-            _ = self.nextToken();
+    fn tokenRange(self: Parser) Range {
+        return self.tokens.items(.range)[self.token_index];
+    }
+
+    fn tokenValue(self: Parser) []const u8 {
+        const range = self.tokenRange();
+        return self.file.buffer[range.start..range.end];
+    }
+
+    fn eat(self: *Parser, tag: Token.Tag) bool {
+        if (self.tokenTag() == tag) {
+            self.advance();
 
             return true;
         } else {
@@ -340,47 +333,217 @@ pub const Parser = struct {
         }
     }
 
-    fn tokenValue(self: Parser, token: Token) []const u8 {
-        return self.file.buffer[token.range.start..token.range.end];
-    }
-
     pub fn parse(self: *Parser) Error!void {
-        while (self.peekToken().tag != .eof) {
-            try self.parseTopLevelStmt();
+        while (self.tokenTag() != .eof) {
+            switch (self.tokenTag()) {
+                .identifier => try self.parseUnit(true),
+                .keyword_asm => try self.parseGlobalAssembly(),
+
+                else => {
+                    self.error_info = .{ .message = "expected a name or 'asm' keyword", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                },
+            }
         }
     }
 
-    fn parseTopLevelStmt(self: *Parser) Error!void {
-        switch (self.peekToken().tag) {
-            .keyword_extern => try self.parseExternalDeclaration(),
+    fn parseName(self: *Parser) Error!Name {
+        if (self.tokenTag() != .identifier) {
+            self.error_info = .{ .message = "expected a name", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
-            .keyword_export => return self.parseExportDeclaration(),
+            return error.WithMessage;
+        }
 
-            .keyword_fn => return self.parseFunctionDeclaration(false, false),
+        const token_range = self.tokenRange();
+        const token_value = self.tokenValue();
 
-            .keyword_const, .keyword_var => try self.parseVariableDeclaration(true, false, false),
+        self.advance();
 
-            .keyword_type => try self.parseTypeAlias(),
+        return Name{ .buffer = token_value, .token_start = token_range.start };
+    }
 
-            .keyword_asm => return self.parseGlobalAssembly(),
+    fn parseUnit(self: *Parser, comptime top_level: bool) Error!void {
+        const name = try self.parseName();
+
+        if (self.sir.constants.get(name.buffer) != null) try self.reportRedeclaration(name);
+        if (self.sir.variables.get(name.buffer) != null) try self.reportRedeclaration(name);
+
+        switch (self.tokenTag()) {
+            .colon => {
+                self.advance();
+
+                var type_instructions: Range = .{ .start = @intCast(self.sir.instructions.items.len), .end = 0 };
+
+                try self.parseExprA(.lowest);
+
+                type_instructions.end = @intCast(self.sir.instructions.items.len);
+
+                if (self.eat(.semicolon)) {
+                    if (top_level) {
+                        return self.sir.variables.put(self.allocator, name.buffer, .{
+                            .token_start = name.token_start,
+                            .type_instructions = type_instructions,
+                            .value_instructions = .{ .start = 0, .end = 0 },
+                        });
+                    } else {
+                        return self.sir.instructions.append(self.allocator, .{ .variable = name });
+                    }
+                }
+
+                if (!self.eat(.assign)) {
+                    self.error_info = .{ .message = "expected '=' or ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                var value_instructions: Range = .{ .start = @intCast(self.sir.instructions.items.len), .end = 0 };
+
+                try self.parseExpr(.lowest);
+
+                if (self.sir.instructions.getLast() == .function) {
+                    self.sir.instructions.items[self.sir.instructions.items.len - 1].function.maybe_named = name;
+                }
+
+                value_instructions.end = @intCast(self.sir.instructions.items.len);
+
+                if (!self.eat(.semicolon)) {
+                    self.error_info = .{ .message = "expected ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                if (top_level) {
+                    try self.sir.variables.put(self.allocator, name.buffer, .{
+                        .token_start = name.token_start,
+                        .type_instructions = type_instructions,
+                        .value_instructions = value_instructions,
+                    });
+                } else {
+                    try self.sir.instructions.appendSlice(self.allocator, &.{
+                        .{ .reverse = 2 },
+                        .{ .variable = name },
+                        .{ .set = name },
+                    });
+                }
+            },
+
+            .double_colon => {
+                self.advance();
+
+                var value_instructions: Range = .{ .start = @intCast(self.sir.instructions.items.len), .end = 0 };
+
+                try self.parseExpr(.lowest);
+
+                if (self.sir.instructions.getLast() == .function) {
+                    self.sir.instructions.items[self.sir.instructions.items.len - 1].function.maybe_named = name;
+                }
+
+                value_instructions.end = @intCast(self.sir.instructions.items.len);
+
+                if (!self.eat(.semicolon) and self.tokens.items(.tag)[self.token_index - 1] != .close_brace) {
+                    self.error_info = .{ .message = "expected ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                if (top_level) {
+                    try self.sir.constants.put(self.allocator, name.buffer, .{
+                        .token_start = name.token_start,
+                        .value_instructions = value_instructions,
+                    });
+                } else {
+                    try self.sir.instructions.append(self.allocator, .{ .constant = name });
+                }
+            },
+
+            .colon_assign => {
+                self.advance();
+
+                var value_instructions: Range = .{ .start = @intCast(self.sir.instructions.items.len), .end = 0 };
+
+                try self.parseExpr(.lowest);
+
+                if (self.sir.instructions.getLast() == .function) {
+                    self.sir.instructions.items[self.sir.instructions.items.len - 1].function.maybe_named = name;
+                }
+
+                value_instructions.end = @intCast(self.sir.instructions.items.len);
+
+                if (!self.eat(.semicolon)) {
+                    self.error_info = .{ .message = "expected ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                if (top_level) {
+                    try self.sir.variables.put(self.allocator, name.buffer, .{
+                        .token_start = name.token_start,
+                        .type_instructions = .{ .start = 0, .end = 0 },
+                        .value_instructions = value_instructions,
+                    });
+                } else {
+                    try self.sir.instructions.appendSlice(self.allocator, &.{
+                        .{ .variable_infer = name },
+                        .{ .set = name },
+                    });
+                }
+            },
 
             else => {
-                self.error_info = .{ .message = "expected a top level statement", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+                self.error_info = .{ .message = "expected '::' or ':=' or ':'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             },
         }
+    }
 
-        if (!self.eatToken(.semicolon)) {
-            self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+    fn parseGlobalAssembly(self: *Parser) Error!void {
+        self.advance();
+
+        if (!self.eat(.open_brace)) {
+            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
+        }
+
+        while (!self.eat(.close_brace)) {
+            if (self.tokenTag() != .string_literal) {
+                self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            const content = self.tokenValue();
+            const string_start = self.tokenRange().start;
+
+            self.advance();
+
+            unescape(self.allocator, &self.sir.global_assembly, content) catch |err| switch (err) {
+                error.InvalidEscapeCharacter => {
+                    self.error_info = .{ .message = "invalid escape character", .source_loc = SourceLoc.find(self.file.buffer, string_start) };
+
+                    return error.WithMessage;
+                },
+
+                inline else => |other_err| return other_err,
+            };
+
+            try self.sir.global_assembly.append(self.allocator, '\n');
         }
     }
 
     fn parseStmt(self: *Parser, expect_semicolon: bool) Error!void {
-        switch (self.peekToken().tag) {
-            .keyword_const, .keyword_var => try self.parseVariableDeclaration(false, false, false),
+        switch (self.tokenTag()) {
+            .identifier => switch (self.tokens.items(.tag)[self.token_index + 1]) {
+                .colon, .double_colon, .colon_assign => return self.parseUnit(false),
+
+                else => {
+                    try self.parseExpr(.lowest);
+
+                    try self.sir.instructions.append(self.allocator, .pop);
+                },
+            },
 
             .keyword_switch => return self.parseSwitch(),
 
@@ -397,11 +560,11 @@ pub const Parser = struct {
             .keyword_return => try self.parseReturn(),
 
             .open_brace => {
-                try self.sir_instructions.append(self.allocator, .start_scope);
+                try self.sir.instructions.append(self.allocator, .start_scope);
 
                 try self.parseBody();
 
-                try self.sir_instructions.append(self.allocator, .end_scope);
+                try self.sir.instructions.append(self.allocator, .end_scope);
 
                 return;
             },
@@ -409,305 +572,34 @@ pub const Parser = struct {
             else => {
                 try self.parseExpr(.lowest);
 
-                try self.sir_instructions.append(self.allocator, .pop);
+                try self.sir.instructions.append(self.allocator, .pop);
             },
         }
 
-        if (expect_semicolon and !self.eatToken(.semicolon)) {
-            self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (expect_semicolon and !self.eat(.semicolon)) {
+            self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
-    }
-
-    fn parseExternalDeclaration(self: *Parser) Error!void {
-        _ = self.nextToken();
-
-        switch (self.peekToken().tag) {
-            .keyword_fn => try self.parseFunctionDeclaration(true, false),
-
-            .keyword_var => try self.parseVariableDeclaration(true, true, false),
-
-            .keyword_const => {
-                self.error_info = .{ .message = "'const' is declaring a compile time constant and cannot be used with 'extern'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                return error.WithMessage;
-            },
-
-            else => {
-                self.error_info = .{ .message = "expected a function or variable declaration", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                return error.WithMessage;
-            },
-        }
-    }
-
-    fn parseExportDeclaration(self: *Parser) Error!void {
-        _ = self.nextToken();
-
-        switch (self.peekToken().tag) {
-            .keyword_fn => try self.parseFunctionDeclaration(false, true),
-
-            .keyword_var => try self.parseVariableDeclaration(true, false, true),
-
-            .keyword_const => {
-                self.error_info = .{ .message = "'const' is declaring a compile time constant and cannot be used with 'export'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                return error.WithMessage;
-            },
-
-            else => {
-                self.error_info = .{ .message = "expected a function or variable declaration", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                return error.WithMessage;
-            },
-        }
-    }
-
-    fn parseFunctionDeclaration(
-        self: *Parser,
-        comptime external: bool,
-        comptime exported: bool,
-    ) Error!void {
-        const fn_keyword_start = self.nextToken().range.start;
-
-        const name = try self.parseName();
-
-        var is_var_args = false;
-
-        const parameter_subsymbols = try self.parseFunctionParameters(&is_var_args);
-
-        const parameter_subtypes = try self.allocator.alloc(SubType, parameter_subsymbols.len);
-
-        for (parameter_subsymbols, 0..) |parameter_subsymbol, i| {
-            parameter_subtypes[i] = parameter_subsymbol.subtype;
-        }
-
-        const return_subtype = if (self.peekToken().tag == .open_brace or (self.peekToken().tag == .semicolon and external))
-            SubType{ .pure = .void }
-        else
-            try self.parseSubType();
-
-        const return_subtype_on_heap = try self.allocator.create(SubType);
-        return_subtype_on_heap.* = return_subtype;
-
-        const function_subtype: SubType = .{
-            .function = .{
-                .parameter_subtypes = parameter_subtypes,
-                .is_var_args = is_var_args,
-                .return_subtype = return_subtype_on_heap,
-            },
-        };
-
-        const function_subtype_on_heap = try self.allocator.create(SubType);
-        function_subtype_on_heap.* = function_subtype;
-
-        const function_pointer_subtype: SubType = .{
-            .pointer = .{
-                .size = .one,
-                .is_const = true,
-                .child_subtype = function_subtype_on_heap,
-            },
-        };
-
-        const subsymbol: SubSymbol = .{
-            .name = name,
-            .subtype = function_pointer_subtype,
-        };
-
-        if (external) {
-            return self.sir.external_declarations.append(self.allocator, subsymbol);
-        }
-
-        const definition = try self.sir.functions.getOrPut(self.allocator, name.buffer);
-        if (definition.found_existing) try self.reportRedeclaration(name);
-
-        definition.value_ptr.* = .{
-            .exported = exported,
-            .subsymbol = subsymbol,
-        };
-
-        self.sir_instructions = &definition.value_ptr.instructions;
-
-        try self.sir_instructions.append(self.allocator, .{ .block = 0 });
-
-        self.block_id = 1;
-
-        try self.sir_instructions.append(self.allocator, .start_scope);
-
-        if (parameter_subsymbols.len != 0) {
-            try self.sir_instructions.append(self.allocator, .{ .parameters = parameter_subsymbols });
-        }
-
-        try self.parseBody();
-
-        if (self.sir_instructions.items.len == 0 or
-            (self.sir_instructions.getLast() != .ret and
-            self.sir_instructions.getLast() != .ret_void))
-        {
-            try self.sir_instructions.append(self.allocator, .{ .ret_void = fn_keyword_start });
-        }
-
-        try self.sir_instructions.append(self.allocator, .end_scope);
-    }
-
-    fn parseFunctionParameters(self: *Parser, is_var_args: *bool) Error![]SubSymbol {
-        if (!self.eatToken(.open_paren)) {
-            self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-
-        var paramters: std.ArrayListUnmanaged(SubSymbol) = .{};
-
-        while (!self.eatToken(.close_paren)) {
-            if (self.peekToken().tag == .eof) {
-                self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                return error.WithMessage;
-            }
-
-            if (self.eatToken(.triple_period)) {
-                is_var_args.* = true;
-
-                if (self.peekToken().tag != .close_paren) {
-                    self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                    return error.WithMessage;
-                }
-
-                continue;
-            }
-
-            try paramters.append(self.allocator, .{
-                .name = try self.parseName(),
-                .subtype = try self.parseSubType(),
-            });
-
-            if (!self.eatToken(.comma) and self.peekToken().tag != .close_paren) {
-                self.error_info = .{ .message = "expected a ',' after parameter", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                return error.WithMessage;
-            }
-        }
-
-        return paramters.toOwnedSlice(self.allocator);
-    }
-
-    fn parseVariableDeclaration(
-        self: *Parser,
-        comptime global: bool,
-        comptime external: bool,
-        comptime exported: bool,
-    ) Error!void {
-        const init_token = self.nextToken();
-
-        const is_const = init_token.tag == .keyword_const;
-
-        const name = try self.parseName();
-
-        const maybe_subtype = if (self.peekToken().tag == .assign or is_const)
-            null
-        else
-            try self.parseSubType();
-
-        const subsymbol: SubSymbol = .{
-            .name = name,
-            .subtype = maybe_subtype orelse .{ .pure = .void },
-        };
-
-        if (external) {
-            return self.sir.external_declarations.append(self.allocator, subsymbol);
-        }
-
-        const has_initializer = self.peekToken().tag != .semicolon or is_const;
-
-        if (has_initializer and !self.eatToken(.assign)) {
-            self.error_info = .{ .message = "expected a '='", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-
-        if (global) {
-            const definition = if (is_const)
-                try self.sir.global_constants.getOrPut(self.allocator, name.buffer)
-            else
-                try self.sir.global_variables.getOrPut(self.allocator, name.buffer);
-
-            if (definition.found_existing) try self.reportRedeclaration(name);
-
-            definition.value_ptr.* = .{
-                .exported = exported,
-                .subsymbol = subsymbol,
-            };
-
-            self.sir_instructions = &definition.value_ptr.instructions;
-        }
-
-        if (has_initializer) {
-            try self.parseExpr(.lowest);
-        }
-
-        if (!global) {
-            try self.sir_instructions.append(
-                self.allocator,
-                if (maybe_subtype != null)
-                    .{
-                        .variable = subsymbol,
-                    }
-                else if (is_const)
-                    .{
-                        .constant = subsymbol,
-                    }
-                else
-                    .{
-                        .variable_infer = subsymbol,
-                    },
-            );
-
-            if (!is_const and has_initializer) {
-                try self.sir_instructions.append(self.allocator, .{ .set = name });
-            }
-        }
-    }
-
-    fn parseTypeAlias(self: *Parser) Error!void {
-        _ = self.nextToken();
-
-        const name = try self.parseName();
-
-        if (!self.eatToken(.assign)) {
-            self.error_info = .{ .message = "expected a '='", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-
-        const subtype = try self.parseSubType();
-
-        const subsymbol: SubSymbol = .{
-            .name = name,
-            .subtype = subtype,
-        };
-
-        const type_alias = try self.sir.type_aliases.getOrPutValue(self.allocator, name.buffer, subsymbol);
-        if (type_alias.found_existing) try self.reportRedeclaration(name);
     }
 
     fn popScopeDefers(self: *Parser) Error!void {
         while (self.scope_defer_count > 0) : (self.scope_defer_count -= 1) {
             const defer_instructions = self.defer_stack.pop();
-            try self.sir_instructions.appendSlice(self.allocator, defer_instructions);
+            try self.sir.instructions.appendSlice(self.allocator, defer_instructions);
             self.allocator.free(defer_instructions);
         }
     }
 
     fn parseSwitch(self: *Parser) Error!void {
-        const switch_keyword_start = self.nextToken().range.start;
+        const switch_keyword_start = self.tokenRange().start;
+
+        self.advance();
 
         try self.parseExpr(.lowest);
 
-        if (!self.eatToken(.open_brace)) {
-            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.open_brace)) {
+            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
@@ -721,12 +613,14 @@ pub const Parser = struct {
         const end_block_id = self.block_id;
         self.block_id += 1;
 
-        while (self.peekToken().tag != .eof and self.peekToken().tag != .close_brace) {
+        while (self.tokenTag() != .eof and self.tokenTag() != .close_brace) {
             const case_block_id = self.block_id;
             self.block_id += 1;
 
-            if (self.peekToken().tag == .keyword_else) {
-                const else_keyword_start = self.nextToken().range.start;
+            if (self.tokenTag() == .keyword_else) {
+                const else_keyword_start = self.tokenRange().start;
+
+                self.advance();
 
                 if (maybe_else_block_id != null) {
                     self.error_info = .{ .message = "duplicate switch case", .source_loc = SourceLoc.find(self.file.buffer, else_keyword_start) };
@@ -737,19 +631,19 @@ pub const Parser = struct {
                 maybe_else_block_id = case_block_id;
             } else {
                 try case_block_ids.append(self.allocator, case_block_id);
-                try case_token_starts.append(self.allocator, self.peekToken().range.start);
+                try case_token_starts.append(self.allocator, self.tokenRange().start);
 
                 try self.parseExpr(.lowest);
 
-                if (self.eatToken(.comma)) {
-                    while (self.peekToken().tag != .eof and self.peekToken().tag != .fat_arrow) {
+                if (self.eat(.comma)) {
+                    while (self.tokenTag() != .eof and self.tokenTag() != .fat_arrow) {
                         try case_block_ids.append(self.allocator, case_block_id);
-                        try case_token_starts.append(self.allocator, self.peekToken().range.start);
+                        try case_token_starts.append(self.allocator, self.tokenRange().start);
 
                         try self.parseExpr(.lowest);
 
-                        if (!self.eatToken(.comma) and self.peekToken().tag != .fat_arrow) {
-                            self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+                        if (!self.eat(.comma) and self.tokenTag() != .fat_arrow) {
+                            self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                             return error.WithMessage;
                         }
@@ -757,23 +651,23 @@ pub const Parser = struct {
                 }
             }
 
-            if (!self.eatToken(.fat_arrow)) {
-                self.error_info = .{ .message = "expected a '=>'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (!self.eat(.fat_arrow)) {
+                self.error_info = .{ .message = "expected a '=>'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
 
             try case_instructions.append(self.allocator, .{ .block = case_block_id });
 
-            const previous_sir_instructions = self.sir_instructions;
-            self.sir_instructions = &case_instructions;
+            const previous_sir_instructions = self.sir.instructions;
+            self.sir.instructions = case_instructions;
 
-            if (self.peekToken().tag == .open_brace) {
-                try self.sir_instructions.append(self.allocator, .start_scope);
+            if (self.tokenTag() == .open_brace) {
+                try self.sir.instructions.append(self.allocator, .start_scope);
 
                 try self.parseBody();
 
-                try self.sir_instructions.append(self.allocator, .end_scope);
+                try self.sir.instructions.append(self.allocator, .end_scope);
             } else {
                 const previous_scope_defer_count = self.scope_defer_count;
                 self.scope_defer_count = 0;
@@ -784,19 +678,20 @@ pub const Parser = struct {
                 self.scope_defer_count = previous_scope_defer_count;
             }
 
-            try self.sir_instructions.append(self.allocator, .{ .br = end_block_id });
+            try self.sir.instructions.append(self.allocator, .{ .br = end_block_id });
 
-            self.sir_instructions = previous_sir_instructions;
+            case_instructions = self.sir.instructions;
+            self.sir.instructions = previous_sir_instructions;
 
-            if (!self.eatToken(.comma) and self.peekToken().tag != .close_brace) {
-                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (!self.eat(.comma) and self.tokenTag() != .close_brace) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
         }
 
-        if (!self.eatToken(.close_brace)) {
-            self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.close_brace)) {
+            self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
@@ -804,10 +699,10 @@ pub const Parser = struct {
         const owned_case_block_ids = try case_block_ids.toOwnedSlice(self.allocator);
         const owned_case_token_starts = try case_token_starts.toOwnedSlice(self.allocator);
 
-        try self.sir_instructions.append(self.allocator, .{ .reverse = @intCast(owned_case_block_ids.len + 1) });
+        try self.sir.instructions.append(self.allocator, .{ .reverse = @intCast(owned_case_block_ids.len + 1) });
 
         if (maybe_else_block_id) |else_block_id| {
-            try self.sir_instructions.append(self.allocator, .{
+            try self.sir.instructions.append(self.allocator, .{
                 .@"switch" = .{
                     .case_block_ids = owned_case_block_ids,
                     .case_token_starts = owned_case_token_starts,
@@ -821,28 +716,30 @@ pub const Parser = struct {
             return error.WithMessage;
         }
 
-        try self.sir_instructions.appendSlice(self.allocator, case_instructions.items);
+        try self.sir.instructions.appendSlice(self.allocator, case_instructions.items);
 
         case_instructions.deinit(self.allocator);
 
-        try self.sir_instructions.append(self.allocator, .{ .block = end_block_id });
+        try self.sir.instructions.append(self.allocator, .{ .block = end_block_id });
     }
 
     fn parseConditional(self: *Parser) Error!void {
         const end_block_id = self.block_id;
         self.block_id += 1;
 
-        try self.sir_instructions.append(self.allocator, .{ .br = self.block_id });
+        try self.sir.instructions.append(self.allocator, .{ .br = self.block_id });
 
         while (true) {
-            const if_keyword_start = self.nextToken().range.start;
+            const if_keyword_start = self.tokenRange().start;
 
-            try self.sir_instructions.append(self.allocator, .{ .block = self.block_id });
+            self.advance();
+
+            try self.sir.instructions.append(self.allocator, .{ .block = self.block_id });
             self.block_id += 1;
 
             try self.parseExpr(.lowest);
 
-            try self.sir_instructions.append(self.allocator, .{
+            try self.sir.instructions.append(self.allocator, .{
                 .cond_br = .{
                     .true_id = self.block_id,
                     .false_id = undefined,
@@ -850,52 +747,54 @@ pub const Parser = struct {
                 },
             });
 
-            const cond_br_index = self.sir_instructions.items.len - 1;
+            const cond_br_index = self.sir.instructions.items.len - 1;
 
-            try self.sir_instructions.append(self.allocator, .{ .block = self.block_id });
+            try self.sir.instructions.append(self.allocator, .{ .block = self.block_id });
             self.block_id += 1;
 
-            try self.sir_instructions.append(self.allocator, .start_scope);
+            try self.sir.instructions.append(self.allocator, .start_scope);
 
             try self.parseBody();
 
-            self.sir_instructions.items[cond_br_index].cond_br.false_id = self.block_id;
+            self.sir.instructions.items[cond_br_index].cond_br.false_id = self.block_id;
 
-            try self.sir_instructions.append(self.allocator, .{ .br = end_block_id });
+            try self.sir.instructions.append(self.allocator, .{ .br = end_block_id });
 
-            try self.sir_instructions.append(self.allocator, .end_scope);
+            try self.sir.instructions.append(self.allocator, .end_scope);
 
-            if (self.eatToken(.keyword_else)) {
-                if (self.peekToken().tag == .keyword_if) continue;
+            if (self.eat(.keyword_else)) {
+                if (self.tokenTag() == .keyword_if) continue;
 
-                try self.sir_instructions.append(self.allocator, .{ .block = self.block_id });
+                try self.sir.instructions.append(self.allocator, .{ .block = self.block_id });
                 self.block_id += 1;
 
-                try self.sir_instructions.append(self.allocator, .start_scope);
+                try self.sir.instructions.append(self.allocator, .start_scope);
 
                 try self.parseBody();
 
-                try self.sir_instructions.append(self.allocator, .{ .br = end_block_id });
+                try self.sir.instructions.append(self.allocator, .{ .br = end_block_id });
 
-                try self.sir_instructions.append(self.allocator, .end_scope);
+                try self.sir.instructions.append(self.allocator, .end_scope);
             } else {
-                try self.sir_instructions.append(self.allocator, .{ .block = self.block_id });
+                try self.sir.instructions.append(self.allocator, .{ .block = self.block_id });
                 self.block_id += 1;
 
-                try self.sir_instructions.append(self.allocator, .{ .br = end_block_id });
+                try self.sir.instructions.append(self.allocator, .{ .br = end_block_id });
             }
 
             break;
         }
 
-        try self.sir_instructions.append(self.allocator, .{ .block = end_block_id });
+        try self.sir.instructions.append(self.allocator, .{ .block = end_block_id });
     }
 
     var maybe_header_block_id: ?u32 = null;
     var maybe_end_block_id: ?u32 = null;
 
     fn parseWhileLoop(self: *Parser) Error!void {
-        const while_keyword_start = self.nextToken().range.start;
+        const while_keyword_start = self.tokenRange().start;
+
+        self.advance();
 
         const header_block_id = self.block_id;
         self.block_id += 1;
@@ -914,36 +813,38 @@ pub const Parser = struct {
         maybe_end_block_id = end_block_id;
         defer maybe_end_block_id = previous_end_block_id;
 
-        try self.sir_instructions.append(self.allocator, .{ .br = header_block_id });
+        try self.sir.instructions.append(self.allocator, .{ .br = header_block_id });
 
-        try self.sir_instructions.append(self.allocator, .{ .block = header_block_id });
+        try self.sir.instructions.append(self.allocator, .{ .block = header_block_id });
 
         try self.parseExpr(.lowest);
 
-        try self.sir_instructions.append(self.allocator, .{ .cond_br = .{
+        try self.sir.instructions.append(self.allocator, .{ .cond_br = .{
             .true_id = body_block_id,
             .false_id = end_block_id,
             .token_start = while_keyword_start,
         } });
 
-        try self.sir_instructions.append(self.allocator, .{ .block = body_block_id });
+        try self.sir.instructions.append(self.allocator, .{ .block = body_block_id });
 
-        try self.sir_instructions.append(self.allocator, .start_scope);
+        try self.sir.instructions.append(self.allocator, .start_scope);
 
         try self.parseBody();
 
-        try self.sir_instructions.append(self.allocator, .{ .br = header_block_id });
+        try self.sir.instructions.append(self.allocator, .{ .br = header_block_id });
 
-        try self.sir_instructions.append(self.allocator, .end_scope);
+        try self.sir.instructions.append(self.allocator, .end_scope);
 
-        try self.sir_instructions.append(self.allocator, .{ .block = end_block_id });
+        try self.sir.instructions.append(self.allocator, .{ .block = end_block_id });
     }
 
     fn parseContinue(self: *Parser) Error!void {
-        const continue_keyword_start = self.nextToken().range.start;
+        const continue_keyword_start = self.tokenRange().start;
+
+        self.advance();
 
         if (maybe_header_block_id) |header_block_id| {
-            return self.sir_instructions.append(self.allocator, .{ .br = header_block_id });
+            return self.sir.instructions.append(self.allocator, .{ .br = header_block_id });
         }
 
         self.error_info = .{ .message = "expected the continue statement to be inside a loop", .source_loc = SourceLoc.find(self.file.buffer, continue_keyword_start) };
@@ -952,10 +853,12 @@ pub const Parser = struct {
     }
 
     fn parseBreak(self: *Parser) Error!void {
-        const break_keyword_start = self.nextToken().range.start;
+        const break_keyword_start = self.tokenRange().start;
+
+        self.advance();
 
         if (maybe_end_block_id) |end_block_id| {
-            return self.sir_instructions.append(self.allocator, .{ .br = end_block_id });
+            return self.sir.instructions.append(self.allocator, .{ .br = end_block_id });
         }
 
         self.error_info = .{ .message = "expected the break statement to be inside a loop", .source_loc = SourceLoc.find(self.file.buffer, break_keyword_start) };
@@ -964,16 +867,16 @@ pub const Parser = struct {
     }
 
     fn parseDefer(self: *Parser) Error!void {
-        _ = self.nextToken();
+        self.advance();
 
-        const defer_instructions_start = self.sir_instructions.items.len;
+        const defer_instructions_start = self.sir.instructions.items.len;
 
-        if (self.peekToken().tag == .open_brace) {
-            try self.sir_instructions.append(self.allocator, .start_scope);
+        if (self.tokenTag() == .open_brace) {
+            try self.sir.instructions.append(self.allocator, .start_scope);
 
             try self.parseBody();
 
-            try self.sir_instructions.append(self.allocator, .end_scope);
+            try self.sir.instructions.append(self.allocator, .end_scope);
         } else {
             const previous_scope_defer_count = self.scope_defer_count;
             self.scope_defer_count = 0;
@@ -984,22 +887,24 @@ pub const Parser = struct {
             self.scope_defer_count = previous_scope_defer_count;
         }
 
-        if (defer_instructions_start == self.sir_instructions.items.len) return;
+        if (defer_instructions_start == self.sir.instructions.items.len) return;
 
-        const defer_instructions = self.sir_instructions.items[defer_instructions_start..];
+        const defer_instructions = self.sir.instructions.items[defer_instructions_start..];
         const defer_instructions_on_heap = try self.allocator.alloc(Instruction, defer_instructions.len);
         @memcpy(defer_instructions_on_heap, defer_instructions);
 
         try self.defer_stack.append(self.allocator, defer_instructions_on_heap);
         self.scope_defer_count += 1;
 
-        self.sir_instructions.shrinkRetainingCapacity(defer_instructions_start);
+        self.sir.instructions.shrinkRetainingCapacity(defer_instructions_start);
     }
 
     fn parseReturn(self: *Parser) Error!void {
-        const return_keyword_start = self.nextToken().range.start;
+        const return_keyword_start = self.tokenRange().start;
 
-        const returns_value = self.peekToken().tag != .semicolon;
+        self.advance();
+
+        const returns_value = self.tokenTag() != .semicolon;
 
         if (returns_value) {
             try self.parseExpr(.lowest);
@@ -1010,7 +915,7 @@ pub const Parser = struct {
 
             while (true) : (i -= 1) {
                 const defer_instructions = self.defer_stack.items[i];
-                try self.sir_instructions.appendSlice(self.allocator, defer_instructions);
+                try self.sir.instructions.appendSlice(self.allocator, defer_instructions);
                 if (i == 0) break;
             }
         }
@@ -1019,9 +924,9 @@ pub const Parser = struct {
         self.scope_defer_count = 0;
 
         if (returns_value) {
-            try self.sir_instructions.append(self.allocator, .{ .ret = return_keyword_start });
+            try self.sir.instructions.append(self.allocator, .{ .ret = return_keyword_start });
         } else {
-            try self.sir_instructions.append(self.allocator, .{ .ret_void = return_keyword_start });
+            try self.sir.instructions.append(self.allocator, .{ .ret_void = return_keyword_start });
         }
     }
 
@@ -1041,8 +946,8 @@ pub const Parser = struct {
         subscript,
         field,
 
-        fn from(token: Token) Precedence {
-            return switch (token.tag) {
+        fn fromTokenTag(tag: Token.Tag) Precedence {
+            return switch (tag) {
                 .plus_assign,
                 .minus_assign,
                 .star_assign,
@@ -1072,16 +977,28 @@ pub const Parser = struct {
         }
     };
 
+    fn parseExprA(self: *Parser, precedence: Precedence) Error!void {
+        try self.parseUnaryExpr();
+
+        while (@intFromEnum(Precedence.fromTokenTag(self.tokenTag())) > @intFromEnum(precedence) and
+            self.tokenTag() != .semicolon and self.tokenTag() != .assign)
+        {
+            try self.parseBinaryExpr();
+        }
+    }
+
     fn parseExpr(self: *Parser, precedence: Precedence) Error!void {
         try self.parseUnaryExpr();
 
-        while (@intFromEnum(Precedence.from(self.peekToken())) > @intFromEnum(precedence) and self.peekToken().tag != .semicolon) {
+        while (@intFromEnum(Precedence.fromTokenTag(self.tokenTag())) > @intFromEnum(precedence) and
+            self.tokenTag() != .semicolon)
+        {
             try self.parseBinaryExpr();
         }
     }
 
     fn parseUnaryExpr(self: *Parser) Error!void {
-        switch (self.peekToken().tag) {
+        switch (self.tokenTag()) {
             .identifier => try self.parseIdentifier(),
 
             .special_identifier => try self.parseSpecialIdentifier(),
@@ -1094,14 +1011,23 @@ pub const Parser = struct {
 
             .float => try self.parseFloat(),
 
-            .keyword_asm => try self.parseInlineAssembly(),
+            .keyword_struct => try self.parseStructType(),
+
+            .keyword_enum => try self.parseEnumType(),
+
+            .keyword_fn => try self.parseFunction(),
+
+            .open_bracket => try self.parsePointerType(true),
+            .star => try self.parsePointerType(false),
 
             .open_paren => try self.parseParentheses(),
+
+            .keyword_asm => return self.parseInlineAssembly(),
 
             .minus, .bool_not, .bit_not, .bit_and => try self.parseUnaryOperation(),
 
             else => {
-                self.error_info = .{ .message = "expected a statement or an expression", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+                self.error_info = .{ .message = "unknown expression", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             },
@@ -1109,30 +1035,37 @@ pub const Parser = struct {
     }
 
     fn parseIdentifier(self: *Parser) Error!void {
-        try self.sir_instructions.append(self.allocator, .{ .get = try self.parseName() });
+        try self.sir.instructions.append(self.allocator, .{ .get = try self.parseName() });
     }
 
     fn parseSpecialIdentifier(self: *Parser) Error!void {
-        const token = self.nextToken();
-        const token_value = self.tokenValue(token);
-        const token_start = token.range.start;
+        const token_value = self.tokenValue();
+        const token_start = self.tokenRange().start;
+
+        self.advance();
 
         if (std.mem.eql(u8, token_value, "import")) {
-            if (!self.eatToken(.open_paren)) {
-                self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (!self.eat(.open_paren)) {
+                self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
 
             try self.parseExpr(.lowest);
 
-            if (!self.eatToken(.close_paren)) {
-                self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (!self.eat(.close_paren)) {
+                self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
 
-            try self.sir_instructions.append(self.allocator, .{ .import = token_start });
+            try self.sir.instructions.append(self.allocator, .{ .import = token_start });
+        } else if (std.mem.eql(u8, token_value, "target_os")) {
+            try self.sir.instructions.append(self.allocator, .{ .int = self.target_os_int_id });
+        } else if (std.mem.eql(u8, token_value, "target_arch")) {
+            try self.sir.instructions.append(self.allocator, .{ .int = self.target_arch_int_id });
+        } else if (std.mem.eql(u8, token_value, "target_abi")) {
+            try self.sir.instructions.append(self.allocator, .{ .int = self.target_abi_int_id });
         } else {
             self.error_info = .{ .message = "unknown special identifier", .source_loc = SourceLoc.find(self.file.buffer, token_start) };
 
@@ -1142,8 +1075,8 @@ pub const Parser = struct {
 
     const UnescapeError = error{InvalidEscapeCharacter} || std.mem.Allocator.Error;
 
-    fn unescape(output: *std.ArrayList(u8), input: []const u8) UnescapeError!void {
-        try output.ensureTotalCapacity(input.len);
+    fn unescape(allocator: std.mem.Allocator, output: *std.ArrayListUnmanaged(u8), input: []const u8) UnescapeError!void {
+        try output.ensureUnusedCapacity(allocator, input.len);
 
         var unescaping = false;
 
@@ -1207,12 +1140,14 @@ pub const Parser = struct {
     }
 
     fn parseString(self: *Parser) Error!void {
-        const content = self.tokenValue(self.peekToken());
-        const string_start = self.nextToken().range.start;
+        const content = self.tokenValue();
+        const string_start = self.tokenRange().start;
 
-        var unescaped_list = std.ArrayList(u8).init(self.allocator);
+        self.advance();
 
-        unescape(&unescaped_list, content) catch |err| switch (err) {
+        const string_bytes_start: u32 = @intCast(self.compilation.pool.bytes.items.len);
+
+        unescape(self.allocator, &self.compilation.pool.bytes, content) catch |err| switch (err) {
             error.InvalidEscapeCharacter => {
                 self.error_info = .{ .message = "invalid escape character", .source_loc = SourceLoc.find(self.file.buffer, string_start) };
 
@@ -1222,18 +1157,21 @@ pub const Parser = struct {
             inline else => |other_err| return other_err,
         };
 
-        const unescaped = try unescaped_list.toOwnedSlice();
+        const string_bytes_end: u32 = @intCast(self.compilation.pool.bytes.items.len);
 
-        try self.sir_instructions.append(self.allocator, .{ .string = unescaped });
+        try self.sir.instructions.append(self.allocator, .{ .string = .{ .start = string_bytes_start, .end = string_bytes_end } });
     }
 
     fn parseChar(self: *Parser) Error!void {
-        const encoded = self.tokenValue(self.peekToken());
-        const char_start = self.nextToken().range.start;
+        const content = self.tokenValue();
+        const char_start = self.tokenRange().start;
 
-        var unescaped_list = std.ArrayList(u8).init(self.allocator);
+        self.advance();
 
-        unescape(&unescaped_list, encoded) catch |err| switch (err) {
+        var unescaped: std.ArrayListUnmanaged(u8) = .{};
+        defer unescaped.deinit(self.allocator);
+
+        unescape(self.allocator, &unescaped, content) catch |err| switch (err) {
             error.InvalidEscapeCharacter => {
                 self.error_info = .{ .message = "invalid escape character", .source_loc = SourceLoc.find(self.file.buffer, char_start) };
 
@@ -1243,13 +1181,11 @@ pub const Parser = struct {
             inline else => |other_err| return other_err,
         };
 
-        const unescaped = try unescaped_list.toOwnedSlice();
-
-        const decoded = switch (unescaped.len) {
-            1 => unescaped[0],
-            2 => std.unicode.utf8Decode2(unescaped[0..2].*),
-            3 => std.unicode.utf8Decode3(unescaped[0..3].*),
-            4 => std.unicode.utf8Decode4(unescaped[0..4].*),
+        const decoded = switch (unescaped.items.len) {
+            1 => unescaped.items[0],
+            2 => std.unicode.utf8Decode2(unescaped.items[0..2].*),
+            3 => std.unicode.utf8Decode3(unescaped.items[0..3].*),
+            4 => std.unicode.utf8Decode4(unescaped.items[0..4].*),
             else => error.TooMuchCodes,
         } catch {
             self.error_info = .{ .message = "invalid character literal", .source_loc = SourceLoc.find(self.file.buffer, char_start) };
@@ -1257,121 +1193,427 @@ pub const Parser = struct {
             return error.WithMessage;
         };
 
-        try self.sir_instructions.append(self.allocator, .{ .int = decoded });
+        try self.sir.instructions.append(self.allocator, .{ .int = try self.compilation.putInt(decoded) });
     }
 
     fn parseInt(self: *Parser) Error!void {
-        const value = std.fmt.parseInt(i128, self.tokenValue(self.nextToken()), 0) catch {
-            self.error_info = .{ .message = "invalid number", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        const value = std.fmt.parseInt(i128, self.tokenValue(), 0) catch {
+            self.error_info = .{ .message = "invalid number", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         };
 
-        try self.sir_instructions.append(self.allocator, .{ .int = value });
+        self.advance();
+
+        try self.sir.instructions.append(self.allocator, .{ .int = try self.compilation.putInt(value) });
     }
 
     fn parseFloat(self: *Parser) Error!void {
-        const value = std.fmt.parseFloat(f64, self.tokenValue(self.nextToken())) catch {
-            self.error_info = .{ .message = "invalid number", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        const value = std.fmt.parseFloat(f64, self.tokenValue()) catch {
+            self.error_info = .{ .message = "invalid number", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         };
 
-        try self.sir_instructions.append(self.allocator, .{ .float = value });
+        self.advance();
+
+        try self.sir.instructions.append(self.allocator, .{ .float = value });
     }
 
-    fn parseGlobalAssembly(self: *Parser) Error!void {
-        _ = self.nextToken();
+    fn parseStructType(self: *Parser) Error!void {
+        const struct_keyword_start = self.tokenRange().start;
 
-        if (!self.eatToken(.open_brace)) {
-            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        self.advance();
+
+        if (!self.eat(.open_brace)) {
+            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
 
-        while (!self.eatToken(.close_brace)) {
-            if (self.peekToken().tag != .string_literal) {
-                self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        var fields: std.StringArrayHashMapUnmanaged(Name) = .{};
+
+        while (!self.eat(.close_brace)) {
+            const field_name = try self.parseName();
+
+            if (fields.get(field_name.buffer) != null) {
+                var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
+
+                try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in struct fields", .{field_name.buffer});
+
+                self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
+            }
+
+            if (!self.eat(.colon)) {
+                self.error_info = .{ .message = "expected a ':'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
 
-            const content = self.tokenValue(self.peekToken());
-            const string_start = self.nextToken().range.start;
+            try self.parseExpr(.lowest);
 
-            var global_assembly_managed = self.sir.global_assembly.toManaged(self.allocator);
+            if (!self.eat(.comma) and self.tokenTag() != .close_brace) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
-            unescape(&global_assembly_managed, content) catch |err| switch (err) {
-                error.InvalidEscapeCharacter => {
-                    self.error_info = .{ .message = "invalid escape character", .source_loc = SourceLoc.find(self.file.buffer, string_start) };
+                return error.WithMessage;
+            }
 
-                    return error.WithMessage;
-                },
-
-                inline else => |other_err| return other_err,
-            };
-
-            self.sir.global_assembly = global_assembly_managed.moveToUnmanaged();
-
-            try self.sir.global_assembly.append(self.allocator, '\n');
+            try fields.put(self.allocator, field_name.buffer, field_name);
         }
+
+        try self.sir.instructions.append(self.allocator, .{ .comptime_reverse = @intCast(fields.count()) });
+
+        try self.sir.instructions.append(self.allocator, .{
+            .struct_type = .{
+                .fields = fields.values(),
+                .token_start = struct_keyword_start,
+            },
+        });
     }
 
-    fn parseInlineAssembly(self: *Parser) Error!void {
-        const asm_keyword_start = self.nextToken().range.start;
+    fn parseEnumType(self: *Parser) Error!void {
+        const enum_keyword_start = self.tokenRange().start;
 
-        var content: std.ArrayListUnmanaged(u8) = .{};
+        self.advance();
 
-        if (!self.eatToken(.open_brace)) {
-            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.open_brace)) {
+            try self.parseExpr(.lowest);
+
+            if (!self.eat(.open_brace)) {
+                self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+        }
+
+        var fields: std.StringArrayHashMapUnmanaged(Type.Enum.Field) = .{};
+
+        while (!self.eat(.close_brace)) {
+            const field_name = try self.parseName();
+
+            if (fields.get(field_name.buffer) != null) {
+                var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
+
+                try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in enum fields", .{field_name.buffer});
+
+                self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
+            }
+
+            var field_int_id = if (self.tokenTag() == .assign)
+                0
+            else if (fields.count() == 0)
+                try self.compilation.putInt(0)
+            else
+                try self.compilation.putInt(self.compilation.getIntFromId(fields.values()[fields.count() - 1].int_id) + 1);
+
+            if (self.eat(.assign)) {
+                if (self.tokenTag() != .int) {
+                    self.error_info = .{ .message = "expected a valid integer", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                try self.parseInt();
+
+                field_int_id = self.sir.instructions.pop().int;
+            }
+
+            if (!self.eat(.comma) and self.tokenTag() != .close_brace) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            try fields.put(self.allocator, field_name.buffer, .{
+                .name = field_name.buffer,
+                .int_id = field_int_id,
+            });
+        }
+
+        try self.sir.instructions.append(self.allocator, .{
+            .enum_type = .{
+                .fields = fields.values(),
+                .token_start = enum_keyword_start,
+            },
+        });
+    }
+
+    fn parseFunction(self: *Parser) Error!void {
+        const fn_keyword_start = self.tokenRange().start;
+
+        self.advance();
+
+        if (!self.eat(.open_paren)) {
+            self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
 
-        var input_constraints: []const []const u8 = &.{};
-        var output_constraint: ?Instruction.InlineAssembly.OutputConstraint = null;
-        var clobbers: []const []const u8 = &.{};
+        var parameters: std.ArrayListUnmanaged(Name) = .{};
 
-        while (!self.eatToken(.close_brace)) {
-            if (self.peekToken().tag != .string_literal) {
-                self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        var is_var_args = false;
+
+        while (!self.eat(.close_paren)) {
+            try parameters.append(self.allocator, try self.parseName());
+
+            if (!self.eat(.colon)) {
+                self.error_info = .{ .message = "expected a ':'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            try self.parseExpr(.lowest);
+
+            if (self.tokenTag() != .close_paren and !self.eat(.comma)) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            if (self.eat(.triple_period)) {
+                is_var_args = true;
+
+                if (!self.eat(.close_paren)) {
+                    if (!self.eat(.colon)) {
+                        self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                        return error.WithMessage;
+                    }
+
+                    if (!self.eat(.close_paren)) {
+                        self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                        return error.WithMessage;
+                    }
+                }
+
+                break;
+            }
+        }
+
+        parameters.shrinkAndFree(self.allocator, parameters.items.len);
+
+        try self.sir.instructions.append(self.allocator, .{ .comptime_reverse = @intCast(parameters.items.len) });
+
+        if (self.tokenTag() != .special_identifier and self.tokenTag() != .open_brace) {
+            try self.parseExpr(.lowest);
+        } else {
+            try self.sir.instructions.append(self.allocator, .{ .get = .{ .buffer = "void", .token_start = 0 } });
+        }
+
+        try self.sir.instructions.append(self.allocator, .{
+            .function_type = .{
+                .parameters_count = parameters.items.len,
+                .is_var_args = is_var_args,
+                .token_start = fn_keyword_start,
+            },
+        });
+
+        var maybe_foreign: ?Range = null;
+
+        if (self.tokenTag() == .special_identifier) {
+            if (std.mem.eql(u8, self.tokenValue(), "foreign")) {
+                self.advance();
+
+                if (!self.eat(.open_paren)) {
+                    self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                if (self.tokenTag() != .string_literal) {
+                    self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                try self.parseString();
+
+                if (!self.eat(.close_paren)) {
+                    self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                maybe_foreign = self.sir.instructions.pop().string;
+            } else {
+                self.error_info = .{ .message = "unknown special identifier", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+        }
+
+        if (self.tokenTag() == .open_brace) {
+            try self.sir.instructions.append(self.allocator, .{
+                .function = .{
+                    .maybe_foreign = maybe_foreign,
+                    .instructions = &.{},
+                    .token_start = fn_keyword_start,
+                },
+            });
+
+            const instructions_start = self.sir.instructions.items.len;
+
+            try self.sir.instructions.appendSlice(self.allocator, &.{
+                .{ .block = 0 },
+                .start_scope,
+                .{ .parameters = parameters.items },
+            });
+
+            self.block_id = 1;
+
+            try self.parseBody();
+
+            const last_instruction = self.sir.instructions.getLast();
+
+            if (last_instruction != .ret and last_instruction != .ret_void)
+                try self.sir.instructions.append(self.allocator, .{ .ret_void = fn_keyword_start });
+
+            try self.sir.instructions.append(self.allocator, .end_scope);
+
+            self.sir.instructions.items[instructions_start - 1].function.instructions =
+                try self.allocator.dupe(Instruction, self.sir.instructions.items[instructions_start..]);
+
+            self.sir.instructions.shrinkRetainingCapacity(instructions_start);
+        } else if (maybe_foreign) |foreign| {
+            try self.sir.instructions.append(self.allocator, .{
+                .function = .{
+                    .maybe_foreign = foreign,
+                    .instructions = &.{},
+                    .token_start = fn_keyword_start,
+                },
+            });
+        }
+    }
+
+    fn parsePointerType(self: *Parser, comptime open_bracket: bool) Error!void {
+        const token_start = self.tokenRange().start;
+
+        self.advance();
+
+        var size: Type.Pointer.Size = .one;
+
+        var is_array = false;
+
+        if (open_bracket) {
+            if (self.eat(.close_bracket)) {
+                size = .slice;
+            } else if (self.eat(.star)) {
+                size = .many;
+
+                if (!self.eat(.close_bracket)) {
+                    self.error_info = .{ .message = "expected a ']'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+            } else {
+                is_array = true;
+
+                try self.parseExpr(.lowest);
+
+                if (!self.eat(.close_bracket)) {
+                    self.error_info = .{ .message = "expected a ']'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+            }
+        }
+
+        if (is_array) {
+            try self.parseExpr(.lowest);
+
+            try self.sir.instructions.append(self.allocator, .{ .array_type = token_start });
+        } else {
+            const is_const = self.eat(.keyword_const);
+
+            try self.parseExpr(.lowest);
+
+            try self.sir.instructions.append(self.allocator, .{
+                .pointer_type = .{
+                    .is_const = is_const,
+                    .size = size,
+                    .token_start = token_start,
+                },
+            });
+        }
+    }
+
+    fn parseParentheses(self: *Parser) Error!void {
+        self.advance();
+
+        try self.parseExpr(.lowest);
+
+        if (!self.eat(.close_paren)) {
+            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+            return error.WithMessage;
+        }
+    }
+
+    fn parseInlineAssembly(self: *Parser) Error!void {
+        const asm_keyword_start = self.tokenRange().start;
+
+        self.advance();
+
+        var content: std.ArrayListUnmanaged(u8) = .{};
+
+        if (!self.eat(.open_brace)) {
+            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+            return error.WithMessage;
+        }
+
+        var input_constraints: []Range = &.{};
+        var output_constraint: ?Range = null;
+        var clobbers: []Range = &.{};
+
+        while (!self.eat(.close_brace)) {
+            if (self.tokenTag() != .string_literal) {
+                self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
 
             try self.parseString();
 
-            try content.appendSlice(self.allocator, self.sir_instructions.pop().string);
+            const string = self.sir.instructions.pop().string;
+
+            try content.appendSlice(self.allocator, self.compilation.getStringFromRange(string));
+
+            self.compilation.pool.bytes.shrinkRetainingCapacity(string.start);
+
             try content.append(self.allocator, '\n');
 
-            if (self.eatToken(.colon)) {
-                if (self.peekToken().tag != .colon) {
-                    output_constraint = try self.parseInlineAssemblyOutputConstraint();
+            if (self.eat(.colon)) {
+                if (self.tokenTag() != .colon) {
+                    output_constraint = try self.parseInlineAssemblyConstraint();
                 }
             }
 
-            if (self.eatToken(.colon)) {
-                if (self.peekToken().tag != .colon) {
-                    input_constraints = try self.parseInlineAssemblyInputConstraints();
+            if (self.eat(.colon)) {
+                if (self.tokenTag() != .colon) {
+                    input_constraints = try self.parseInlineAssemblyConstraints();
                 }
             }
 
-            if (self.eatToken(.colon)) {
-                if (self.peekToken().tag != .close_brace) {
+            if (self.eat(.colon)) {
+                if (self.tokenTag() != .close_brace) {
                     clobbers = try self.parseInlineAssemblyClobbers();
                 }
             }
 
-            if (self.peekToken().tag != .close_brace and (self.peekToken().tag != .colon or self.peekToken().tag != .string_literal)) {
-                self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (self.tokenTag() != .close_brace and (self.tokenTag() != .colon or self.tokenTag() != .string_literal)) {
+                self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
         }
 
-        try self.sir_instructions.append(self.allocator, .{
+        content.shrinkAndFree(self.allocator, content.items.len);
+
+        try self.sir.instructions.append(self.allocator, .{
             .inline_assembly = .{
-                .content = try content.toOwnedSlice(self.allocator),
+                .content = content.items,
                 .input_constraints = input_constraints,
                 .output_constraint = output_constraint,
                 .clobbers = clobbers,
@@ -1380,45 +1622,45 @@ pub const Parser = struct {
         });
     }
 
-    fn parseInlineAssemblyInputConstraints(self: *Parser) Error![][]const u8 {
-        var constraints = std.ArrayList([]const u8).init(self.allocator);
+    fn parseInlineAssemblyConstraints(self: *Parser) Error![]Range {
+        var constraints = std.ArrayList(Range).init(self.allocator);
 
-        while (self.peekToken().tag != .eof and self.peekToken().tag != .colon and self.peekToken().tag != .close_brace) {
-            try constraints.append(try self.parseInlineAssemblyInputConstraint());
+        while (self.tokenTag() != .eof and self.tokenTag() != .colon and self.tokenTag() != .close_brace) {
+            try constraints.append(try self.parseInlineAssemblyConstraint());
 
-            if (!self.eatToken(.comma) and self.peekToken().tag != .colon and self.peekToken().tag != .close_brace) {
-                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (!self.eat(.comma) and self.tokenTag() != .colon and self.tokenTag() != .close_brace) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
         }
 
-        try self.sir_instructions.append(self.allocator, .{ .reverse = @intCast(constraints.items.len) });
+        try self.sir.instructions.append(self.allocator, .{ .reverse = @intCast(constraints.items.len) });
 
         return constraints.toOwnedSlice();
     }
 
-    fn parseInlineAssemblyInputConstraint(self: *Parser) Error![]const u8 {
-        if (self.peekToken().tag != .string_literal) {
-            self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+    fn parseInlineAssemblyConstraint(self: *Parser) Error!Range {
+        if (self.tokenTag() != .string_literal) {
+            self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
 
         try self.parseString();
 
-        const register = self.sir_instructions.pop().string;
+        const register = self.sir.instructions.pop().string;
 
-        if (!self.eatToken(.open_paren)) {
-            self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.open_paren)) {
+            self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
 
         try self.parseExpr(.lowest);
 
-        if (!self.eatToken(.close_paren)) {
-            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.close_paren)) {
+            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
@@ -1426,53 +1668,24 @@ pub const Parser = struct {
         return register;
     }
 
-    fn parseInlineAssemblyOutputConstraint(self: *Parser) Error!Instruction.InlineAssembly.OutputConstraint {
-        if (self.peekToken().tag != .string_literal) {
-            self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+    fn parseInlineAssemblyClobbers(self: *Parser) Error![]Range {
+        var clobbers = std.ArrayList(Range).init(self.allocator);
 
-            return error.WithMessage;
-        }
-
-        try self.parseString();
-
-        const register = self.sir_instructions.pop().string;
-
-        if (!self.eatToken(.open_paren)) {
-            self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-
-        const subtype = try self.parseSubType();
-
-        if (!self.eatToken(.close_paren)) {
-            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-
-        return Instruction.InlineAssembly.OutputConstraint{
-            .register = register,
-            .subtype = subtype,
-        };
-    }
-
-    fn parseInlineAssemblyClobbers(self: *Parser) Error![][]const u8 {
-        var clobbers = std.ArrayList([]const u8).init(self.allocator);
-
-        while (self.peekToken().tag != .eof and self.peekToken().tag != .close_brace) {
-            if (self.peekToken().tag != .string_literal) {
-                self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        while (self.tokenTag() != .eof and self.tokenTag() != .close_brace) {
+            if (self.tokenTag() != .string_literal) {
+                self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
 
             try self.parseString();
 
-            try clobbers.append(self.sir_instructions.pop().string);
+            const clobber = self.sir.instructions.pop().string;
 
-            if (!self.eatToken(.comma) and self.peekToken().tag != .close_brace) {
-                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            try clobbers.append(clobber);
+
+            if (!self.eat(.comma) and self.tokenTag() != .close_brace) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
@@ -1481,38 +1694,29 @@ pub const Parser = struct {
         return clobbers.toOwnedSlice();
     }
 
-    fn parseParentheses(self: *Parser) Error!void {
-        _ = self.nextToken();
-
-        try self.parseExpr(.lowest);
-
-        if (!self.eatToken(.close_paren)) {
-            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-    }
-
     fn parseUnaryOperation(self: *Parser) Error!void {
-        const operator_token = self.nextToken();
+        const operator_tag = self.tokenTag();
+        const operator_start = self.tokenRange().start;
+
+        self.advance();
 
         try self.parseExpr(.prefix);
 
-        switch (operator_token.tag) {
+        switch (operator_tag) {
             .minus => {
-                try self.sir_instructions.append(self.allocator, .{ .negate = operator_token.range.start });
+                try self.sir.instructions.append(self.allocator, .{ .negate = operator_start });
             },
 
             .bool_not => {
-                try self.sir_instructions.append(self.allocator, .{ .bool_not = operator_token.range.start });
+                try self.sir.instructions.append(self.allocator, .{ .bool_not = operator_start });
             },
 
             .bit_not => {
-                try self.sir_instructions.append(self.allocator, .{ .bit_not = operator_token.range.start });
+                try self.sir.instructions.append(self.allocator, .{ .bit_not = operator_start });
             },
 
             .bit_and => {
-                try self.sir_instructions.append(self.allocator, .{ .reference = operator_token.range.start });
+                try self.sir.instructions.append(self.allocator, .{ .reference = operator_start });
             },
 
             else => unreachable,
@@ -1520,7 +1724,7 @@ pub const Parser = struct {
     }
 
     fn parseBinaryExpr(self: *Parser) Error!void {
-        switch (self.peekToken().tag) {
+        switch (self.tokenTag()) {
             .plus,
             .minus,
             .star,
@@ -1559,7 +1763,7 @@ pub const Parser = struct {
             .period => try self.parseFieldAccess(),
 
             else => {
-                self.error_info = .{ .message = "expected a statement or an expression", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+                self.error_info = .{ .message = "unknown expression", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             },
@@ -1567,15 +1771,18 @@ pub const Parser = struct {
     }
 
     fn parseBinaryOperation(self: *Parser) Error!void {
-        const operator_token = self.nextToken();
+        const operator_tag = self.tokenTag();
+        const operator_start = self.tokenRange().start;
 
-        const precedence = Precedence.from(operator_token);
+        self.advance();
+
+        const precedence = Precedence.fromTokenTag(operator_tag);
 
         if (precedence != .assign) {
             try self.parseExpr(precedence);
         }
 
-        switch (operator_token.tag) {
+        switch (operator_tag) {
             .plus_assign,
             .minus_assign,
             .star_assign,
@@ -1588,91 +1795,87 @@ pub const Parser = struct {
             .right_shift_assign,
             .assign,
             => {
-                const maybe_additional_operator_token: ?Token = if (operator_token.tag != .assign)
-                    .{
-                        .tag = switch (operator_token.tag) {
-                            .plus_assign => .plus,
-                            .minus_assign => .minus,
-                            .star_assign => .star,
-                            .divide_assign => .divide,
-                            .modulo_assign => .modulo,
-                            .bit_and_assign => .bit_and,
-                            .bit_or_assign => .bit_or,
-                            .bit_xor_assign => .bit_xor,
-                            .left_shift_assign => .left_shift,
-                            .right_shift_assign => .right_shift,
-
-                            else => unreachable,
-                        },
-                        .range = operator_token.range,
+                const maybe_additional_operator: ?Token.Tag = if (operator_tag != .assign)
+                    switch (operator_tag) {
+                        .plus_assign => .plus,
+                        .minus_assign => .minus,
+                        .star_assign => .star,
+                        .divide_assign => .divide,
+                        .modulo_assign => .modulo,
+                        .bit_and_assign => .bit_and,
+                        .bit_or_assign => .bit_or,
+                        .bit_xor_assign => .bit_xor,
+                        .left_shift_assign => .left_shift,
+                        .right_shift_assign => .right_shift,
+                        else => unreachable,
                     }
                 else
                     null;
 
-                const last_instruction = self.sir_instructions.pop();
+                const last_instruction = self.sir.instructions.pop();
 
                 if (last_instruction == .get_element or last_instruction == .get_field) {
-                    try self.sir_instructions.appendSlice(self.allocator, &.{
+                    try self.sir.instructions.appendSlice(self.allocator, &.{
                         last_instruction,
-                        .{ .reference = operator_token.range.start },
+                        .{ .reference = operator_start },
                     });
 
                     try self.parseExpr(precedence);
 
-                    if (maybe_additional_operator_token) |additional_operator_token| {
-                        try self.sir_instructions.appendSlice(
+                    if (maybe_additional_operator) |additional_operator| {
+                        try self.sir.instructions.appendSlice(
                             self.allocator,
                             &.{
                                 .{ .reverse = 2 },
                                 .duplicate,
-                                .{ .read = operator_token.range.start },
+                                .{ .read = operator_start },
                                 .{ .reverse = 2 },
                                 .{ .reverse = 3 },
                             },
                         );
 
-                        try self.emitBinaryOperation(additional_operator_token);
+                        try self.emitBinaryOperation(additional_operator, operator_start);
                     }
 
-                    try self.sir_instructions.appendSlice(
+                    try self.sir.instructions.appendSlice(
                         self.allocator,
                         &.{
                             .duplicate,
                             .{ .reverse = 3 },
-                            .{ .write = operator_token.range.start },
+                            .{ .write = operator_start },
                         },
                     );
                 } else if (last_instruction == .read) {
                     try self.parseExpr(precedence);
 
-                    if (maybe_additional_operator_token) |additional_operator_token| {
-                        try self.sir_instructions.appendSlice(
+                    if (maybe_additional_operator) |additional_operator_token| {
+                        try self.sir.instructions.appendSlice(
                             self.allocator,
                             &.{
                                 .{ .reverse = 2 },
                                 .duplicate,
-                                .{ .read = operator_token.range.start },
+                                .{ .read = operator_start },
                                 .{ .reverse = 2 },
                                 .{ .reverse = 3 },
                             },
                         );
 
-                        try self.emitBinaryOperation(additional_operator_token);
+                        try self.emitBinaryOperation(additional_operator_token, operator_start);
                     }
 
-                    try self.sir_instructions.appendSlice(
+                    try self.sir.instructions.appendSlice(
                         self.allocator,
                         &.{
                             .duplicate,
                             .{ .reverse = 3 },
-                            .{ .write = operator_token.range.start },
+                            .{ .write = operator_start },
                         },
                     );
                 } else if (last_instruction == .get) {
                     try self.parseExpr(precedence);
 
-                    if (maybe_additional_operator_token) |additional_operator_token| {
-                        try self.sir_instructions.appendSlice(
+                    if (maybe_additional_operator) |additional_operator_token| {
+                        try self.sir.instructions.appendSlice(
                             self.allocator,
                             &.{
                                 last_instruction,
@@ -1680,10 +1883,10 @@ pub const Parser = struct {
                             },
                         );
 
-                        try self.emitBinaryOperation(additional_operator_token);
+                        try self.emitBinaryOperation(additional_operator_token, operator_start);
                     }
 
-                    try self.sir_instructions.appendSlice(
+                    try self.sir.instructions.appendSlice(
                         self.allocator,
                         &.{
                             .duplicate,
@@ -1691,45 +1894,45 @@ pub const Parser = struct {
                         },
                     );
                 } else {
-                    self.error_info = .{ .message = "cannot assign to value", .source_loc = SourceLoc.find(self.file.buffer, operator_token.range.start) };
+                    self.error_info = .{ .message = "cannot assign to value", .source_loc = SourceLoc.find(self.file.buffer, operator_start) };
 
                     return error.WithMessage;
                 }
             },
 
-            else => try self.emitBinaryOperation(operator_token),
+            else => try self.emitBinaryOperation(operator_tag, operator_start),
         }
     }
 
-    fn emitBinaryOperation(self: *Parser, operator_token: Token) Error!void {
-        switch (operator_token.tag) {
-            .plus => try self.sir_instructions.append(self.allocator, .{ .add = operator_token.range.start }),
-            .minus => try self.sir_instructions.append(self.allocator, .{ .sub = operator_token.range.start }),
-            .star => try self.sir_instructions.append(self.allocator, .{ .mul = operator_token.range.start }),
-            .divide => try self.sir_instructions.append(self.allocator, .{ .div = operator_token.range.start }),
-            .modulo => try self.sir_instructions.append(self.allocator, .{ .rem = operator_token.range.start }),
-            .less_than => try self.sir_instructions.append(self.allocator, .{ .lt = operator_token.range.start }),
-            .greater_than => try self.sir_instructions.append(self.allocator, .{ .gt = operator_token.range.start }),
-            .eql => try self.sir_instructions.append(self.allocator, .{ .eql = operator_token.range.start }),
-            .left_shift => try self.sir_instructions.append(self.allocator, .{ .shl = operator_token.range.start }),
-            .right_shift => try self.sir_instructions.append(self.allocator, .{ .shr = operator_token.range.start }),
-            .bit_and => try self.sir_instructions.append(self.allocator, .{ .bit_and = operator_token.range.start }),
-            .bit_or => try self.sir_instructions.append(self.allocator, .{ .bit_or = operator_token.range.start }),
-            .bit_xor => try self.sir_instructions.append(self.allocator, .{ .bit_xor = operator_token.range.start }),
+    fn emitBinaryOperation(self: *Parser, operator_tag: Token.Tag, operator_start: u32) Error!void {
+        switch (operator_tag) {
+            .plus => try self.sir.instructions.append(self.allocator, .{ .add = operator_start }),
+            .minus => try self.sir.instructions.append(self.allocator, .{ .sub = operator_start }),
+            .star => try self.sir.instructions.append(self.allocator, .{ .mul = operator_start }),
+            .divide => try self.sir.instructions.append(self.allocator, .{ .div = operator_start }),
+            .modulo => try self.sir.instructions.append(self.allocator, .{ .rem = operator_start }),
+            .less_than => try self.sir.instructions.append(self.allocator, .{ .lt = operator_start }),
+            .greater_than => try self.sir.instructions.append(self.allocator, .{ .gt = operator_start }),
+            .eql => try self.sir.instructions.append(self.allocator, .{ .eql = operator_start }),
+            .left_shift => try self.sir.instructions.append(self.allocator, .{ .shl = operator_start }),
+            .right_shift => try self.sir.instructions.append(self.allocator, .{ .shr = operator_start }),
+            .bit_and => try self.sir.instructions.append(self.allocator, .{ .bit_and = operator_start }),
+            .bit_or => try self.sir.instructions.append(self.allocator, .{ .bit_or = operator_start }),
+            .bit_xor => try self.sir.instructions.append(self.allocator, .{ .bit_xor = operator_start }),
 
             .not_eql => {
-                try self.sir_instructions.append(self.allocator, .{ .eql = operator_token.range.start });
-                try self.sir_instructions.append(self.allocator, .{ .bool_not = operator_token.range.start });
+                try self.sir.instructions.append(self.allocator, .{ .eql = operator_start });
+                try self.sir.instructions.append(self.allocator, .{ .bool_not = operator_start });
             },
 
             .less_or_eql => {
-                try self.sir_instructions.append(self.allocator, .{ .gt = operator_token.range.start });
-                try self.sir_instructions.append(self.allocator, .{ .bool_not = operator_token.range.start });
+                try self.sir.instructions.append(self.allocator, .{ .gt = operator_start });
+                try self.sir.instructions.append(self.allocator, .{ .bool_not = operator_start });
             },
 
             .greater_or_eql => {
-                try self.sir_instructions.append(self.allocator, .{ .lt = operator_token.range.start });
-                try self.sir_instructions.append(self.allocator, .{ .bool_not = operator_token.range.start });
+                try self.sir.instructions.append(self.allocator, .{ .lt = operator_start });
+                try self.sir.instructions.append(self.allocator, .{ .bool_not = operator_start });
             },
 
             else => unreachable,
@@ -1737,39 +1940,44 @@ pub const Parser = struct {
     }
 
     fn parseCast(self: *Parser) Error!void {
-        const as_keyword_start = self.nextToken().range.start;
+        const as_keyword_start = self.tokenRange().start;
 
-        const to = try self.parseSubType();
+        self.advance();
 
-        try self.sir_instructions.append(self.allocator, .{ .cast = .{ .to = to, .token_start = as_keyword_start } });
+        try self.parseExpr(.cast);
+
+        try self.sir.instructions.append(self.allocator, .{ .cast = as_keyword_start });
     }
 
     fn parseCall(self: *Parser) Error!void {
-        const open_paren_start = self.nextToken().range.start;
+        const open_paren_start = self.tokenRange().start;
+
+        self.advance();
 
         const arguments_count = try self.parseCallArguments();
 
-        try self.sir_instructions.append(self.allocator, .{ .reverse = arguments_count + 1 });
+        try self.sir.instructions.append(self.allocator, .{ .reverse = arguments_count + 1 });
 
-        try self.sir_instructions.append(self.allocator, .{ .call = .{ .arguments_count = arguments_count, .token_start = open_paren_start } });
+        try self.sir.instructions.append(self.allocator, .{ .call = .{ .arguments_count = arguments_count, .token_start = open_paren_start } });
     }
 
     fn parseCallArguments(self: *Parser) Error!u32 {
         var count: u32 = 0;
 
-        while (self.peekToken().tag != .eof and self.peekToken().tag != .close_paren) {
+        while (self.tokenTag() != .eof and self.tokenTag() != .close_paren) {
             try self.parseExpr(.lowest);
+
             count += 1;
 
-            if (!self.eatToken(.comma) and self.peekToken().tag != .close_paren) {
-                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (!self.eat(.comma) and self.tokenTag() != .close_paren) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
         }
 
-        if (!self.eatToken(.close_paren)) {
-            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.close_paren)) {
+            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
@@ -1778,375 +1986,62 @@ pub const Parser = struct {
     }
 
     fn parseSubscript(self: *Parser) Error!void {
-        const open_bracket_start = self.nextToken().range.start;
+        const open_bracket_start = self.tokenRange().start;
 
-        try self.sir_instructions.append(self.allocator, .{ .pre_get_element = open_bracket_start });
+        self.advance();
+
+        try self.sir.instructions.append(self.allocator, .{ .pre_get_element = open_bracket_start });
 
         try self.parseExpr(.lowest);
 
-        const slicing = self.eatToken(.double_period);
+        const slicing = self.eat(.double_period);
 
         if (slicing) {
             try self.parseExpr(.lowest);
 
-            try self.sir_instructions.append(self.allocator, .{ .make_slice = open_bracket_start });
+            try self.sir.instructions.append(self.allocator, .{ .make_slice = open_bracket_start });
         }
 
-        if (!self.eatToken(.close_bracket)) {
-            self.error_info = .{ .message = "expected a ']'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.close_bracket)) {
+            self.error_info = .{ .message = "expected a ']'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
 
         if (!slicing) {
-            try self.sir_instructions.append(self.allocator, .{ .get_element = open_bracket_start });
+            try self.sir.instructions.append(self.allocator, .{ .get_element = open_bracket_start });
         }
     }
 
     fn parseFieldAccess(self: *Parser) Error!void {
-        const period_start = self.nextToken().range.start;
+        const period_start = self.tokenRange().start;
 
-        if (self.eatToken(.star)) {
-            try self.sir_instructions.append(self.allocator, .{ .read = period_start });
+        self.advance();
+
+        if (self.eat(.star)) {
+            try self.sir.instructions.append(self.allocator, .{ .read = period_start });
         } else {
             const name = try self.parseName();
 
-            try self.sir_instructions.append(self.allocator, .{ .get_field = name });
+            try self.sir.instructions.append(self.allocator, .{ .get_field = name });
         }
-    }
-
-    fn parseName(self: *Parser) Error!Name {
-        if (self.peekToken().tag != .identifier) {
-            self.error_info = .{ .message = "expected a name", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-            return error.WithMessage;
-        }
-
-        return Name{ .buffer = self.tokenValue(self.peekToken()), .token_start = self.nextToken().range.start };
-    }
-
-    fn parseSubType(self: *Parser) Error!SubType {
-        switch (self.peekToken().tag) {
-            .identifier => {
-                const first_name = try self.parseName();
-
-                if (self.peekToken().tag != .period) {
-                    return SubType{ .name = first_name };
-                }
-
-                var chained_names: std.ArrayListUnmanaged(Name) = .{};
-
-                try chained_names.append(self.allocator, first_name);
-
-                while (self.eatToken(.period)) {
-                    try chained_names.append(self.allocator, try self.parseName());
-                }
-
-                chained_names.shrinkAndFree(self.allocator, chained_names.items.len);
-
-                return SubType{ .chained_names = chained_names.items };
-            },
-
-            .keyword_struct => {
-                _ = self.nextToken();
-
-                if (!self.eatToken(.open_brace)) {
-                    self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                    return error.WithMessage;
-                }
-
-                var subsymbols: std.ArrayListUnmanaged(SubSymbol) = .{};
-
-                var fields_hashset = std.StringHashMapUnmanaged(void){};
-                defer fields_hashset.deinit(self.allocator);
-
-                while (self.peekToken().tag != .close_brace) {
-                    const name = try self.parseName();
-
-                    if (fields_hashset.get(name.buffer)) |_| {
-                        var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
-
-                        try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in struct fields", .{name.buffer});
-
-                        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.file.buffer, name.token_start) };
-
-                        return error.WithMessage;
-                    }
-
-                    try fields_hashset.put(self.allocator, name.buffer, {});
-
-                    try subsymbols.append(self.allocator, .{
-                        .name = name,
-                        .subtype = try self.parseSubType(),
-                    });
-
-                    if (!self.eatToken(.comma) and self.peekToken().tag != .close_brace) {
-                        self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                        return error.WithMessage;
-                    }
-                }
-
-                if (!self.eatToken(.close_brace)) {
-                    self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                    return error.WithMessage;
-                }
-
-                return SubType{ .@"struct" = .{ .subsymbols = try subsymbols.toOwnedSlice(self.allocator) } };
-            },
-
-            .keyword_enum => {
-                const enum_keyword_start = self.nextToken().range.start;
-
-                const maybe_subtype = if (self.peekToken().tag == .open_brace)
-                    null
-                else
-                    try self.parseSubType();
-
-                if (!self.eatToken(.open_brace)) {
-                    self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, enum_keyword_start) };
-
-                    return error.WithMessage;
-                }
-
-                var fields: std.ArrayListUnmanaged(SubType.Enum.Field) = .{};
-
-                var fields_hashset = std.StringHashMapUnmanaged(void){};
-                defer fields_hashset.deinit(self.allocator);
-
-                var next_value: i128 = 0;
-
-                var max_value: i128 = 0;
-                var min_value: i128 = 0;
-
-                while (self.peekToken().tag != .eof and self.peekToken().tag != .close_brace) {
-                    const name = try self.parseName();
-
-                    if (fields_hashset.get(name.buffer)) |_| {
-                        var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
-
-                        try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in enum fields", .{name.buffer});
-
-                        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.file.buffer, name.token_start) };
-
-                        return error.WithMessage;
-                    }
-
-                    try fields_hashset.put(self.allocator, name.buffer, {});
-
-                    const value = if (self.eatToken(.assign)) blk: {
-                        if (self.peekToken().tag != .int) {
-                            self.error_info = .{ .message = "expected an integer", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                            return error.WithMessage;
-                        }
-
-                        break :blk std.fmt.parseInt(i128, self.tokenValue(self.nextToken()), 0) catch {
-                            self.error_info = .{ .message = "invalid number", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                            return error.WithMessage;
-                        };
-                    } else next_value;
-
-                    next_value = value + 1;
-
-                    if (value > max_value) max_value = value;
-                    if (value < min_value) min_value = value;
-
-                    try fields.append(self.allocator, .{
-                        .name = name,
-                        .value = value,
-                    });
-
-                    if (!self.eatToken(.comma) and self.peekToken().tag != .close_brace) {
-                        self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                        return error.WithMessage;
-                    }
-                }
-
-                if (!self.eatToken(.close_brace)) {
-                    self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                    return error.WithMessage;
-                }
-
-                const subtype = if (maybe_subtype) |subtype|
-                    subtype
-                else blk: {
-                    break :blk SubType{ .pure = Type.intFittingRange(min_value, max_value) };
-                };
-
-                const subtype_on_heap = try self.allocator.create(SubType);
-                subtype_on_heap.* = subtype;
-
-                return SubType{
-                    .@"enum" = .{
-                        .subtype = subtype_on_heap,
-                        .fields = try fields.toOwnedSlice(self.allocator),
-                        .token_start = enum_keyword_start,
-                    },
-                };
-            },
-
-            .keyword_fn => {
-                _ = self.nextToken();
-
-                if (!self.eatToken(.open_paren)) {
-                    self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                    return error.WithMessage;
-                }
-
-                var is_var_args = false;
-
-                var parameter_subtypes: std.ArrayListUnmanaged(SubType) = .{};
-
-                while (!self.eatToken(.close_paren)) {
-                    if (self.peekToken().tag == .eof) {
-                        self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                        return error.WithMessage;
-                    }
-
-                    if (self.eatToken(.triple_period)) {
-                        is_var_args = true;
-
-                        if (self.peekToken().tag != .close_paren) {
-                            self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                            return error.WithMessage;
-                        }
-
-                        continue;
-                    }
-
-                    try parameter_subtypes.append(self.allocator, try self.parseSubType());
-
-                    if (!self.eatToken(.comma) and self.peekToken().tag != .close_paren) {
-                        self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                        return error.WithMessage;
-                    }
-                }
-
-                const return_subtype = try self.parseSubType();
-
-                const return_subtype_on_heap = try self.allocator.create(SubType);
-                return_subtype_on_heap.* = return_subtype;
-
-                return SubType{
-                    .function = .{
-                        .parameter_subtypes = try parameter_subtypes.toOwnedSlice(self.allocator),
-                        .is_var_args = is_var_args,
-                        .return_subtype = return_subtype_on_heap,
-                    },
-                };
-            },
-
-            .star => {
-                _ = self.nextToken();
-
-                const is_const = self.eatToken(.keyword_const);
-
-                const child = try self.parseSubType();
-
-                const child_on_heap = try self.allocator.create(SubType);
-                child_on_heap.* = child;
-
-                return SubType{
-                    .pointer = .{
-                        .size = .one,
-                        .is_const = is_const,
-                        .child_subtype = child_on_heap,
-                    },
-                };
-            },
-
-            .open_bracket => {
-                _ = self.nextToken();
-
-                var size: Type.Pointer.Size = .slice;
-
-                if (self.eatToken(.star)) {
-                    if (!self.eatToken(.close_bracket)) {
-                        self.error_info = .{ .message = "expected a ']'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                        return error.WithMessage;
-                    }
-
-                    size = .many;
-                } else if (self.peekToken().tag == .int) {
-                    const len = std.fmt.parseInt(usize, self.tokenValue(self.nextToken()), 0) catch {
-                        self.error_info = .{ .message = "invalid array length", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                        return error.WithMessage;
-                    };
-
-                    if (!self.eatToken(.close_bracket)) {
-                        self.error_info = .{ .message = "expected a ']'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                        return error.WithMessage;
-                    }
-
-                    const child = try self.parseSubType();
-
-                    const child_on_heap = try self.allocator.create(SubType);
-                    child_on_heap.* = child;
-
-                    return SubType{
-                        .array = .{
-                            .len = len,
-                            .child_subtype = child_on_heap,
-                        },
-                    };
-                } else if (!self.eatToken(.close_bracket)) {
-                    self.error_info = .{ .message = "expected a ']'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-                    return error.WithMessage;
-                }
-
-                const is_const = self.eatToken(.keyword_const);
-
-                const child = try self.parseSubType();
-
-                const child_on_heap = try self.allocator.create(SubType);
-                child_on_heap.* = child;
-
-                return SubType{
-                    .pointer = .{
-                        .size = size,
-                        .is_const = is_const,
-                        .child_subtype = child_on_heap,
-                    },
-                };
-            },
-
-            else => {},
-        }
-
-        self.error_info = .{ .message = "expected a type", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
-
-        return error.WithMessage;
     }
 
     fn parseBody(self: *Parser) Error!void {
         const previous_scope_defer_count = self.scope_defer_count;
         self.scope_defer_count = 0;
 
-        if (!self.eatToken(.open_brace)) {
-            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+        if (!self.eat(.open_brace)) {
+            self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
         }
 
-        while (!self.eatToken(.close_brace)) {
+        while (!self.eat(.close_brace)) {
             try self.parseStmt(true);
 
-            if (self.peekToken().tag == .eof) {
-                self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.peekToken().range.start) };
+            if (self.tokenTag() == .eof) {
+                self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }

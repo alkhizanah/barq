@@ -1,5 +1,5 @@
-const std = @import("std");
+std :: @import("std");
 
-fn main() {
+main :: fn () {
     std.io.println("Hello, World!");
 }
