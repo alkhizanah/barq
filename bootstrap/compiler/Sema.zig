@@ -31,7 +31,7 @@ stack: std.ArrayListUnmanaged(Value) = .{},
 scope: *Scope,
 allocated_scopes: std.ArrayListUnmanaged(Scope) = .{},
 
-container_name: ?[]const u8 = null,
+blocks_queue: Queue(u32) = .{},
 
 function_type: Type.Function = undefined,
 
@@ -84,6 +84,47 @@ const Variable = struct {
     air_name: []const u8,
     value: Value,
 };
+
+fn Queue(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        pub const Node = struct {
+            next: ?*Node = null,
+            value: T,
+        };
+
+        first: ?*Node = null,
+        last: ?*Node = null,
+
+        pub fn enqueue(self: *Self, allocator: std.mem.Allocator, value: T) std.mem.Allocator.Error!void {
+            const node = try allocator.create(Node);
+            node.* = .{ .value = value };
+
+            if (self.last) |last| {
+                last.next = node;
+            } else {
+                self.first = node;
+            }
+
+            self.last = node;
+        }
+
+        pub fn dequeue(self: *Self, allocator: std.mem.Allocator) ?T {
+            const node = self.first orelse return null;
+            defer allocator.destroy(node);
+
+            if (node.next) |next| {
+                self.first = next;
+            } else {
+                self.first = null;
+                self.last = null;
+            }
+
+            return node.value;
+        }
+    };
+}
 
 pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, module_id: u32, air: *Air) Error!Sema {
     const module = &compilation.pool.modules.values()[module_id];
@@ -609,15 +650,41 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
         self.allocated_scopes = previous_allocated_scopes;
     }
 
+    const previous_blocks_queue = self.blocks_queue;
+    defer self.blocks_queue = previous_blocks_queue;
+
     self.allocated_scopes = .{};
+    self.blocks_queue = .{};
+
+    var blocks: std.AutoHashMapUnmanaged(u32, Range) = .{};
+    defer blocks.deinit(self.allocator);
+
+    var current_block: u32 = 0;
+    var current_block_start: u32 = 0;
 
     var scopes_count: usize = 0;
 
-    for (function.instructions) |instruction|
+    for (function.instructions, 0..) |instruction, i|
         switch (instruction) {
+            .block => |block_id| {
+                try blocks.put(self.allocator, current_block, .{
+                    .start = current_block_start,
+                    .end = @intCast(i),
+                });
+
+                current_block = block_id;
+                current_block_start = @intCast(i);
+            },
+
             .start_scope => scopes_count += 1,
+
             else => {},
         };
+
+    try blocks.put(self.allocator, current_block, .{
+        .start = current_block_start,
+        .end = @intCast(function.instructions.len),
+    });
 
     try self.allocated_scopes.ensureUnusedCapacity(self.allocator, scopes_count);
 
@@ -628,7 +695,7 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
     else
         try std.fmt.allocPrint(self.allocator, "__anon_function_{}", .{prng.random().int(u32)});
 
-    const id: u32 = @intCast(self.air.functions.count());
+    const function_id: u32 = @intCast(self.air.functions.count());
 
     try self.air.functions.put(self.allocator, air_name, .{
         .type_id = function_type_id,
@@ -643,17 +710,28 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
         try self.scope.put(self.allocator, name.buffer, .{
             .is_const = true,
             .air_name = air_name,
-            .value = .{ .function = id },
+            .value = .{ .function = function_id },
         });
     }
 
     const instructions_start = self.air_instructions.items.len;
 
-    for (function.instructions) |instruction| {
-        try self.analyzeInstruction(instruction);
+    // Enqueue the root block to start the analysis of function instructions
+    // each block that ends with `br` or `cond_br` would make us continue the analysis
+    try self.blocks_queue.enqueue(self.allocator, 0);
+
+    while (self.blocks_queue.dequeue(self.allocator)) |block_id| {
+        // Check if it is not already emitted, as multiple blocks may branch into the same block
+        if (blocks.get(block_id)) |block| {
+            for (function.instructions[block.start..block.end]) |instruction| {
+                try self.analyzeInstruction(instruction);
+            }
+
+            _ = blocks.remove(block_id);
+        }
     }
 
-    self.air.functions.values()[id].instructions = try self.allocator.dupe(Air.Instruction, self.air_instructions.items[instructions_start..]);
+    self.air.functions.values()[function_id].instructions = try self.allocator.dupe(Air.Instruction, self.air_instructions.items[instructions_start..]);
 
     self.air_instructions.shrinkRetainingCapacity(instructions_start);
 
@@ -667,7 +745,7 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
 
     try self.air_instructions.append(self.allocator, .{ .get_variable_ptr = air_name });
 
-    try self.stack.append(self.allocator, .{ .function = id });
+    try self.stack.append(self.allocator, .{ .function = function_id });
 }
 
 fn analyzeArrayType(self: *Sema, token_start: u32) Error!void {
@@ -2014,6 +2092,7 @@ fn analyzeBlock(self: *Sema, id: u32) Error!void {
 }
 
 fn analyzeBr(self: *Sema, id: u32) Error!void {
+    try self.blocks_queue.enqueue(self.allocator, id);
     try self.air_instructions.append(self.allocator, .{ .br = id });
 }
 
@@ -2026,18 +2105,19 @@ fn analyzeCondBr(self: *Sema, cond_br: Sir.Instruction.CondBr) Error!void {
         .boolean => |condition_boolean| {
             try self.air_instructions.append(self.allocator, .pop);
 
-            try self.air_instructions.append(
-                self.allocator,
-                .{
-                    .br = if (condition_boolean)
-                        cond_br.true_id
-                    else
-                        cond_br.false_id,
-                },
-            );
+            const id = if (condition_boolean)
+                cond_br.true_id
+            else
+                cond_br.false_id;
+
+            try self.blocks_queue.enqueue(self.allocator, id);
+            try self.air_instructions.append(self.allocator, .{ .br = id });
         },
 
         else => {
+            try self.blocks_queue.enqueue(self.allocator, cond_br.true_id);
+            try self.blocks_queue.enqueue(self.allocator, cond_br.false_id);
+
             try self.air_instructions.append(
                 self.allocator,
                 .{
