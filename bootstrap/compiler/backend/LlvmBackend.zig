@@ -913,6 +913,8 @@ fn renderParameters(self: *LlvmBackend, names: [][]const u8) Error!void {
             .pointer = llvm_pointer,
         });
     }
+
+    self.allocator.free(names);
 }
 
 fn renderVariable(self: *LlvmBackend, variable: struct { []const u8, u32 }) Error!void {

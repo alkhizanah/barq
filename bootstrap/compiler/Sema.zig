@@ -650,10 +650,11 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
         self.allocated_scopes = previous_allocated_scopes;
     }
 
+    self.allocated_scopes = .{};
+
     const previous_blocks_queue = self.blocks_queue;
     defer self.blocks_queue = previous_blocks_queue;
 
-    self.allocated_scopes = .{};
     self.blocks_queue = .{};
 
     var blocks: std.AutoHashMapUnmanaged(u32, Range) = .{};
@@ -702,19 +703,17 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
         .instructions = &.{},
     });
 
-    var maybe_previous_scope_variable: ?Variable = null;
+    const instructions_start = self.air_instructions.items.len;
+
+    try self.modifyScope(true);
 
     if (function.maybe_named) |name| {
-        maybe_previous_scope_variable = self.scope.get(name.buffer);
-
         try self.scope.put(self.allocator, name.buffer, .{
             .is_const = true,
             .air_name = air_name,
             .value = .{ .function = function_id },
         });
     }
-
-    const instructions_start = self.air_instructions.items.len;
 
     // Enqueue the root block to start the analysis of function instructions
     // each block that ends with `br` or `cond_br` would make us continue the analysis
@@ -731,17 +730,11 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
         }
     }
 
+    try self.modifyScope(false);
+
     self.air.functions.values()[function_id].instructions = try self.allocator.dupe(Air.Instruction, self.air_instructions.items[instructions_start..]);
 
     self.air_instructions.shrinkRetainingCapacity(instructions_start);
-
-    if (function.maybe_named) |name| {
-        if (maybe_previous_scope_variable) |previous_scope_variable| {
-            try self.scope.put(self.allocator, name.buffer, previous_scope_variable);
-        } else {
-            _ = self.scope.remove(name.buffer);
-        }
-    }
 
     try self.air_instructions.append(self.allocator, .{ .get_variable_ptr = air_name });
 
@@ -2004,15 +1997,14 @@ fn analyzeCall(self: *Sema, call: Sir.Instruction.Call) Error!void {
 }
 
 fn analyzeParameters(self: *Sema, names: []Name) Error!void {
-    var detokenized_names: std.ArrayListUnmanaged([]const u8) = .{};
-    try detokenized_names.ensureTotalCapacity(self.allocator, names.len);
+    const detokenized_names = try self.allocator.alloc([]const u8, names.len);
 
-    try self.scope.ensureTotalCapacity(self.allocator, @intCast(names.len));
+    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(names.len));
 
     for (names, 0..) |name, i| {
         if (self.scope.get(name.buffer) != null) try self.reportRedeclaration(name);
 
-        detokenized_names.appendAssumeCapacity(name.buffer);
+        detokenized_names[i] = name.buffer;
 
         self.scope.putAssumeCapacity(name.buffer, .{
             .air_name = name.buffer,
@@ -2020,7 +2012,7 @@ fn analyzeParameters(self: *Sema, names: []Name) Error!void {
         });
     }
 
-    try self.air_instructions.append(self.allocator, .{ .parameters = detokenized_names.items });
+    try self.air_instructions.append(self.allocator, .{ .parameters = detokenized_names });
 }
 
 fn analyzeConstant(self: *Sema, name: Name) Error!void {

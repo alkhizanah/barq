@@ -1456,7 +1456,6 @@ pub const Parser = struct {
 
             try self.sir.instructions.appendSlice(self.allocator, &.{
                 .{ .block = 0 },
-                .start_scope,
                 .{ .parameters = parameters.items },
             });
 
@@ -1468,8 +1467,6 @@ pub const Parser = struct {
 
             if (last_instruction != .ret and last_instruction != .ret_void)
                 try self.sir.instructions.append(self.allocator, .{ .ret_void = fn_keyword_start });
-
-            try self.sir.instructions.append(self.allocator, .end_scope);
 
             self.sir.instructions.items[instructions_start - 1].function.instructions =
                 try self.allocator.dupe(Instruction, self.sir.instructions.items[instructions_start..]);
