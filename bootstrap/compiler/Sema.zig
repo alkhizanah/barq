@@ -716,7 +716,7 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
     }
 
     // Enqueue the root block to start the analysis of function instructions
-    // each block that ends with `br` or `cond_br` would make us continue the analysis
+    // each block that ends with `switch` or `br` or `cond_br` would make us continue the analysis
     try self.blocks_queue.enqueue(self.allocator, 0);
 
     while (self.blocks_queue.dequeue(self.allocator)) |block_id| {
@@ -2131,7 +2131,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
 
     var case_values: std.AutoHashMapUnmanaged(i128, void) = .{};
 
-    for (@"switch".case_token_starts) |case_token_start| {
+    for (@"switch".case_token_starts, 0..) |case_token_start, i| {
         const case_value = self.stack.pop();
 
         try self.checkUnaryImplicitCast(case_value, switched_value_type, case_token_start);
@@ -2156,7 +2156,11 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
         }
 
         try case_values.put(self.allocator, case_value_int, {});
+
+        try self.blocks_queue.enqueue(self.allocator, @"switch".case_block_ids[i]);
     }
+
+    try self.blocks_queue.enqueue(self.allocator, @"switch".else_block_id);
 
     case_values.deinit(self.allocator);
 
