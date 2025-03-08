@@ -22,12 +22,12 @@ main :: fn () u8 @foreign("main") {
     screen := XDefaultScreen(display);
     gc := XDefaultGC(display, screen);
 
-    x: c_int = 0;
-    y: c_int = 0;
-    width: c_uint = 800;
-    height: c_uint = 600;
-    border_width: c_uint = 0;
-    depth: c_uint;
+    x : c_int = 0;
+    y : c_int = 0;
+    width : c_uint = 800;
+    height : c_uint = 600;
+    border_width : c_uint = 0;
+    depth : c_uint;
 
     window := XCreateSimpleWindow(display, XDefaultRootWindow(display), x, y, width, height, border_width, 0, XBlackPixel(display, screen));
 
@@ -40,7 +40,7 @@ main :: fn () u8 @foreign("main") {
 
         XSetForeground(display, gc, (std.c.rand() % 0xFFFFFF) as c_ulong);
 
-        i: u16 = 0;
+        i : u16 = 0;
         
         while (i < 255 * 2) {
             XDrawPoint(display, window, gc, std.c.rand() % width as c_int, std.c.rand() % height as c_int);
@@ -61,20 +61,22 @@ XID :: c_ulong;
 XWindow :: XID;
 XDrawable :: XID;
 
-XOpenDisplay :: fn (display_name: [*]const u8) *XDisplay @foreign("XOpenDisplay");
-XCloseDisplay :: fn (display: *XDisplay) @foreign("XCloseDisplay");
-XFlush :: fn (display: *XDisplay) @foreign("XFlush");
+XOpenDisplay :: fn (display_name : [*]const u8) *XDisplay @foreign("XOpenDisplay");
+XCloseDisplay :: fn (display : *XDisplay) @foreign("XCloseDisplay");
+XFlush :: fn (display : *XDisplay) @foreign("XFlush");
 
-XBlackPixel :: fn (display: *XDisplay, screen: c_int) c_ulong @foreign("XBlackPixel");
+XBlackPixel :: fn (display : *XDisplay, screen : c_int) c_ulong @foreign("XBlackPixel");
 
-XDefaultScreen :: fn (display: *XDisplay) c_int @foreign("XDefaultScreen");
-XDefaultRootWindow :: fn (display: *XDisplay) XWindow @foreign("XDefaultRootWindow");
-XCreateSimpleWindow :: fn (display: *XDisplay, parent: XWindow, x: c_int, y: c_int, width: c_uint, height: c_uint, border_width: c_uint, border: c_ulong, background: c_ulong) XWindow @foreign("XCreateSimpleWindow");
-XDestroyWindow :: fn (display: *XDisplay, window: XWindow) @foreign("XDestroyWindow");
-XMapWindow :: fn (display: *XDisplay, window: XWindow) @foreign("XMapWindow");
+XDefaultScreen :: fn (display : *XDisplay) c_int @foreign("XDefaultScreen");
+XDefaultRootWindow :: fn (display : *XDisplay) XWindow @foreign("XDefaultRootWindow");
+XCreateSimpleWindow :: fn (display : *XDisplay, parent : XWindow, x : c_int, y : c_int, width : c_uint, height : c_uint,
+                            border_width : c_uint, border : c_ulong, background : c_ulong) XWindow @foreign("XCreateSimpleWindow");
+XDestroyWindow :: fn (display : *XDisplay, window : XWindow) @foreign("XDestroyWindow");
+XMapWindow :: fn (display : *XDisplay, window : XWindow) @foreign("XMapWindow");
 
-XDefaultGC :: fn (display: *XDisplay, screen: c_int) *XGraphicsContext @foreign("XDefaultGC");
-XSetForeground :: fn (display: *XDisplay, gc: *XGraphicsContext, foreground: c_ulong) @foreign("XSetForeground");
-XSetBackground :: fn (display: *XDisplay, gc: *XGraphicsContext, background: c_ulong) @foreign("XSetBackground");
-XDrawPoint :: fn (display: *XDisplay, drawable: XDrawable, gc: *XGraphicsContext, x: c_int, y: c_int) @foreign("XDrawPoint");
-XGetGeometry :: fn (display: *XDisplay, drawable: XDrawable, root_return: *XWindow, x_return: *c_int, y_return: *c_int, width_return: *c_uint, height_return: *c_uint, border_width_return: *c_uint, depth_return: *c_uint) @foreign("XGetGeometry");
+XDefaultGC :: fn (display : *XDisplay, screen : c_int) *XGraphicsContext @foreign("XDefaultGC");
+XSetForeground :: fn (display : *XDisplay, gc : *XGraphicsContext, foreground : c_ulong) @foreign("XSetForeground");
+XSetBackground :: fn (display : *XDisplay, gc : *XGraphicsContext, background : c_ulong) @foreign("XSetBackground");
+XDrawPoint :: fn (display : *XDisplay, drawable : XDrawable, gc : *XGraphicsContext, x : c_int, y : c_int) @foreign("XDrawPoint");
+XGetGeometry :: fn (display : *XDisplay, drawable : XDrawable, root_return : *XWindow, x_return : *c_int, y_return : *c_int,
+                    width_return : *c_uint, height_return : *c_uint, border_width_return : *c_uint, depth_return : *c_uint) @foreign("XGetGeometry");

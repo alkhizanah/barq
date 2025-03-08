@@ -1,6 +1,6 @@
 Token :: struct {
-    tag: TokenTag,
-    range: TokenRange,
+    tag : TokenTag,
+    range : TokenRange,
 }
 
 TokenTag :: enum {
@@ -57,13 +57,13 @@ TokenTag :: enum {
 }
 
 TokenRange :: struct {
-    start: u32,
-    end: u32,
+    start : u32,
+    end : u32,
 }
 
 Lexer :: struct {
-    index: u32,
-    buffer: [*]const u8,
+    index : u32,
+    buffer : [*]const u8,
 }
 
 LexerState :: enum {
@@ -95,14 +95,14 @@ LexerState :: enum {
     double_period,
 }
 
-next :: fn (self: *Lexer) Token {
-    result: Token;
+next :: fn (self : *Lexer) Token {
+    result : Token;
 
     result.tag = TokenTag.eof;
     result.range.start = self.index;
     result.range.end = self.index;
 
-    state: LexerState = LexerState.start;
+    state : LexerState = LexerState.start;
 
     while true {
         ch := self.buffer[self.index];

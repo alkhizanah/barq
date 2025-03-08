@@ -1,24 +1,24 @@
 linux :: @import("os/linux.bq");
 
 // TODO: This is a temporary solution until we have a proper files implementation which must work on all platforms
-printfd :: fn (fd: s32, str: []const u8) {
+printfd :: fn (fd : s32, str : []const u8) {
     linux.write(fd, str.ptr as usize, str.len);
 }
 
-print :: fn (str: []const u8) {
+print :: fn (str : []const u8) {
     printfd(linux.STDOUT, str);
 }
 
-println :: fn (str: []const u8) {
+println :: fn (str : []const u8) {
     print(str);
     print("\n");
 }
 
-eprint :: fn (str: []const u8) {
+eprint :: fn (str : []const u8) {
     printfd(linux.STDERR, str);
 }
 
-eprintln :: fn (str: []const u8) {
+eprintln :: fn (str : []const u8) {
     eprint(str);
     eprint("\n");
 }

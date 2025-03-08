@@ -1,10 +1,10 @@
 std :: @import("std");
 
 Server :: struct {
-    fd: s32,
+    fd : s32,
 }
 
-server_init :: fn (server: *Server) {
+server_init :: fn (server : *Server) {
     std.io.print("creating socket.. ");
 
     if (server.fd = std.os.linux.socket(std.os.linux.AF_INET, std.os.linux.SOCK_STREAM, 0)) < 0 {
@@ -15,11 +15,11 @@ server_init :: fn (server: *Server) {
         std.io.print("success\n");
     }
 
-    optlevel: u32 = 1;
+    optlevel : u32 = 1;
     std.os.linux.setsockopt(server.fd, std.os.linux.SOL_SOCKET, std.os.linux.SO_REUSEADDR, &optlevel as usize, 4);
     std.os.linux.setsockopt(server.fd, std.os.linux.SOL_SOCKET, std.os.linux.SO_REUSEPORT, &optlevel as usize, 4);
 
-    address: std.os.linux.sockaddr_in;
+    address : std.os.linux.sockaddr_in;
     address.family = std.os.linux.AF_INET;
     address.port = 0x901f;
     address.addr = 0;
@@ -47,12 +47,12 @@ server_init :: fn (server: *Server) {
 }
 
 Client :: struct {
-    fd: s32,
-    address: std.os.linux.sockaddr,
+    fd : s32,
+    address : std.os.linux.sockaddr,
 }
 
-server_accept :: fn (server: Server, client: *Client) {
-    address_len: std.os.linux.socklen_t;
+server_accept :: fn (server : Server, client : *Client) {
+    address_len : std.os.linux.socklen_t;
 
     std.io.print("accepting request.. ");
 
@@ -65,12 +65,12 @@ server_accept :: fn (server: Server, client: *Client) {
     }
 }
 
-client_close :: fn (client: Client) {
+client_close :: fn (client : Client) {
     std.os.linux.close(client.fd);
 }
 
-http :: fn (client: Client) {
-    ch: u8 = 0;
+http :: fn (client : Client) {
+    ch : u8 = 0;
 
     while std.os.linux.read(client.fd, &ch as usize, 1) == 1 {
         if ch == '\n' {
@@ -84,11 +84,11 @@ http :: fn (client: Client) {
         }
     }
 
-    std.io.printfd(client.fd, "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html\r\n\r\n<h1>Hello, World!</h1>\n");
+    std.io.printfd(client.fd, "HTTP/1.1 200 OK\r\nConnection : close\r\nContent-Type : text/html\r\n\r\n<h1>Hello, World!</h1>\n");
 }
 
-echo :: fn (client: Client) {
-    ch: u8 = 0;
+echo :: fn (client : Client) {
+    ch : u8 = 0;
 
     while std.os.linux.read(client.fd, &ch as usize, 1) == 1 {
         std.os.linux.write(client.fd, &ch as usize, 1);
@@ -96,8 +96,8 @@ echo :: fn (client: Client) {
 }
 
 main :: fn () {
-    server: Server;
-    client: Client;
+    server : Server;
+    client : Client;
 
     server_init(&server);
 

@@ -1,5 +1,5 @@
 os :: @import("os.bq");
 
-exit :: fn (status: u8) {
+exit :: fn (status : u8) {
     os.linux.exit_group(status);
 }

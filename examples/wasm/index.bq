@@ -11,18 +11,18 @@
 // 5. Open the http server in your browser
 //    i.e: `firefox localhost:8000`
 
-set_color :: fn (r: u8, g: u8, b: u8) @foreign("set_color");
-draw_point :: fn (x: u32, y: u32) @foreign("draw_point");
-rand :: fn (end: u32) u32 @foreign("rand");
+set_color :: fn (r : u8, g : u8, b : u8) @foreign("set_color");
+draw_point :: fn (x : u32, y : u32) @foreign("draw_point");
+rand :: fn (end : u32) u32 @foreign("rand");
 
 get_width :: fn () u32 @foreign("get_width");
 get_height :: fn () u32 @foreign("get_height");
 
-width: u32;
-height: u32;
+width : u32;
+height : u32;
 
 noise :: fn () {
-    i: u8 = 0;
+    i : u8 = 0;
 
     while i < 255 {
         r := rand(255) as u8;

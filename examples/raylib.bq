@@ -8,9 +8,9 @@
 //    i.e: `cc raylib_example.o -l:libraylib.a -lm -o raylib_example`
 
 noise :: fn () {
-    color: Color;
+    color : Color;
 
-    i: u8 = 0;
+    i : u8 = 0;
 
     while i < 255 {
         color.r = GetRandomValue(0, 255) as c_uchar;
@@ -24,7 +24,7 @@ noise :: fn () {
     }
 }
 
-circle_equation :: fn (boundaries: Vector2, position: *Vector2, color: *Color) {
+circle_equation :: fn (boundaries : Vector2, position : *Vector2, color : *Color) {
     cx := boundaries.x / 2.0;
     cy := boundaries.y / 2.0;
 
@@ -50,7 +50,7 @@ circle_equation :: fn (boundaries: Vector2, position: *Vector2, color: *Color) {
     }
 }
 
-squircle_equation :: fn (boundaries: Vector2, position: *Vector2, color: *Color) {
+squircle_equation :: fn (boundaries : Vector2, position : *Vector2, color : *Color) {
     cx := boundaries.x / 2.0;
     cy := boundaries.y / 2.0;
 
@@ -79,20 +79,20 @@ squircle_equation :: fn (boundaries: Vector2, position: *Vector2, color: *Color)
     }
 }
 
-graph_equation :: fn (boundaries: Vector2, position: *Vector2, color: *Color) {
+graph_equation :: fn (boundaries : Vector2, position : *Vector2, color : *Color) {
     // circle_equation(boundaries, position, color);
     // squircle_equation(boundaries, position, color);
 }
 
 graph :: fn () {
-    boundaries: Vector2;
+    boundaries : Vector2;
     boundaries.x = GetRenderWidth() as c_float;
     boundaries.y = GetRenderHeight() as c_float;
 
-    position: Vector2;
+    position : Vector2;
     position.y = 0.0;
 
-    red: Color;
+    red : Color;
     red.r = 255;
     red.g = 0;
     red.b = 0;
@@ -136,22 +136,22 @@ main :: fn () u8 @foreign("main") {
 }
 
 Vector2 :: struct {
-    x: c_float,
-    y: c_float,
+    x : c_float,
+    y : c_float,
 }
 
 Color :: struct {
-    r: c_uchar,
-    g: c_uchar,
-    b: c_uchar,
-    a: c_uchar,
+    r : c_uchar,
+    g : c_uchar,
+    b : c_uchar,
+    a : c_uchar,
 }
 
 FLAG_WINDOW_RESIZABLE :: 0x00000004;
 
-SetConfigFlags :: fn (flags: c_uint) @foreign("SetConfigFlags");
+SetConfigFlags :: fn (flags : c_uint) @foreign("SetConfigFlags");
 
-InitWindow :: fn (width: c_int, height: c_int, title: [*]const u8) @foreign("InitWindow");
+InitWindow :: fn (width : c_int, height : c_int, title : [*]const u8) @foreign("InitWindow");
 CloseWindow :: fn () @foreign("CloseWindow");
 WindowShouldClose :: fn () bool @foreign("WindowShouldClose");
 
@@ -161,7 +161,7 @@ GetRenderHeight :: fn () c_int @foreign("GetRenderHeight");
 BeginDrawing :: fn () @foreign("BeginDrawing");
 EndDrawing :: fn () @foreign("EndDrawing");
 
-SetRandomSeed :: fn (seed: c_int) @foreign("SetRandomSeed");
-GetRandomValue :: fn (min: c_int, max: c_int) c_int @foreign("GetRandomValue");
+SetRandomSeed :: fn (seed : c_int) @foreign("SetRandomSeed");
+GetRandomValue :: fn (min : c_int, max : c_int) c_int @foreign("GetRandomValue");
 
-DrawPixel :: fn (x: c_int, y: c_int, color: Color) @foreign("DrawPixel");
+DrawPixel :: fn (x : c_int, y : c_int, color : Color) @foreign("DrawPixel");

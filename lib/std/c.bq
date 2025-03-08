@@ -1,7 +1,7 @@
-printf :: fn (format: [*]const u8, ...) @foreign("printf");
+printf :: fn (format : [*]const u8, ...) @foreign("printf");
 
 time_t :: c_long;
-time :: fn (timer: *time_t) time_t @foreign("time");
+time :: fn (timer : *time_t) time_t @foreign("time");
 
-srand :: fn (seed: c_uint) @foreign("srand");
+srand :: fn (seed : c_uint) @foreign("srand");
 rand :: fn () c_int @foreign("rand");

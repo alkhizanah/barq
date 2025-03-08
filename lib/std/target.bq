@@ -51,7 +51,7 @@ Os :: enum {
     opengl,
     vulkan,
 
-    // LLVM tags deliberately omitted:
+    // LLVM tags deliberately omitted :
     // - darwin
     // - kfreebsd
     // - nacl
@@ -107,7 +107,7 @@ Arch :: enum {
     xcore,
     xtensa,
 
-    // LLVM tags deliberately omitted:
+    // LLVM tags deliberately omitted :
     // - aarch64_32
     // - amdil
     // - amdil64
