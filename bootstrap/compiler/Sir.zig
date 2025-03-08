@@ -534,7 +534,9 @@ pub const Parser = struct {
     }
 
     fn parseStmt(self: *Parser, expect_semicolon: bool) Error!void {
-        switch (self.tokenTag()) {
+        const stmt_token_tag = self.tokenTag();
+
+        switch (stmt_token_tag) {
             .identifier => switch (self.tokens.items(.tag)[self.token_index + 1]) {
                 .colon, .double_colon, .colon_assign => return self.parseUnit(false),
 
@@ -545,17 +547,17 @@ pub const Parser = struct {
                 },
             },
 
-            .keyword_switch => return self.parseSwitch(),
+            .keyword_switch => try self.parseSwitch(),
 
-            .keyword_if => return self.parseConditional(),
+            .keyword_if => try self.parseConditional(),
 
-            .keyword_while => return self.parseWhileLoop(),
+            .keyword_while => try self.parseWhileLoop(),
 
             .keyword_break => try self.parseBreak(),
 
             .keyword_continue => try self.parseContinue(),
 
-            .keyword_defer => return self.parseDefer(),
+            .keyword_defer => try self.parseDefer(),
 
             .keyword_return => try self.parseReturn(),
 
@@ -565,8 +567,6 @@ pub const Parser = struct {
                 try self.parseBody();
 
                 try self.sir.instructions.append(self.allocator, .end_scope);
-
-                return;
             },
 
             else => {
@@ -576,7 +576,10 @@ pub const Parser = struct {
             },
         }
 
-        if (expect_semicolon and !self.eat(.semicolon)) {
+        if (expect_semicolon and
+            (stmt_token_tag == .keyword_return or self.tokens.items(.tag)[self.token_index - 1] != .close_brace) and
+            !self.eat(.semicolon))
+        {
             self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
             return error.WithMessage;
@@ -881,7 +884,7 @@ pub const Parser = struct {
             const previous_scope_defer_count = self.scope_defer_count;
             self.scope_defer_count = 0;
 
-            try self.parseStmt(true);
+            try self.parseStmt(false);
 
             try self.popScopeDefers();
             self.scope_defer_count = previous_scope_defer_count;
@@ -1022,7 +1025,7 @@ pub const Parser = struct {
 
             .open_paren => try self.parseParentheses(),
 
-            .keyword_asm => return self.parseInlineAssembly(),
+            .keyword_asm => try self.parseInlineAssembly(),
 
             .minus, .bool_not, .bit_not, .bit_and => try self.parseUnaryOperation(),
 
