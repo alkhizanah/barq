@@ -1,10 +1,10 @@
 std :: @import("std");
 
 main :: fn () {
-    i : u32 = 0;
+    i: u32 = 0;
 
     while i < 8 {
-        j : u32 = 0;
+        j: u32 = 0;
 
         while j < 8 {
             if (i + j) % 2 == 0 {

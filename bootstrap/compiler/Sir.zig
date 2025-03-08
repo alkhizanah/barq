@@ -392,7 +392,7 @@ pub const Parser = struct {
                 }
 
                 if (!self.eat(.assign)) {
-                    self.error_info = .{ .message = "expected '=' or ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                    self.error_info = .{ .message = "expected either '=' or ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
                 }
@@ -407,8 +407,8 @@ pub const Parser = struct {
 
                 value_instructions.end = @intCast(self.sir.instructions.items.len);
 
-                if (!self.eat(.semicolon)) {
-                    self.error_info = .{ .message = "expected ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
+                    self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
                 }
@@ -441,8 +441,8 @@ pub const Parser = struct {
 
                 value_instructions.end = @intCast(self.sir.instructions.items.len);
 
-                if (!self.eat(.semicolon) and self.tokens.items(.tag)[self.token_index - 1] != .close_brace) {
-                    self.error_info = .{ .message = "expected ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
+                    self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
                 }
@@ -470,8 +470,8 @@ pub const Parser = struct {
 
                 value_instructions.end = @intCast(self.sir.instructions.items.len);
 
-                if (!self.eat(.semicolon)) {
-                    self.error_info = .{ .message = "expected ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
+                    self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
                 }
@@ -491,7 +491,7 @@ pub const Parser = struct {
             },
 
             else => {
-                self.error_info = .{ .message = "expected '::' or ':=' or ':'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                self.error_info = .{ .message = "expected either '::' or ':=' or ':'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             },

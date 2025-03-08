@@ -480,7 +480,7 @@ close :: fn (fd: s32) s32 {
 timespec :: struct {
     sec: ssize,
     nsec: ssize,
-};
+}
 
 uid_t :: u32;
 gid_t :: u32;
@@ -505,13 +505,13 @@ Stat :: struct {
     mtim: timespec,
     ctim: timespec,
     __unused: [3]ssize,
-};
+}
 
 statx_timestamp :: struct {
     sec: s64,
     nsec: u32,
     __pad1: u32,
-};
+}
 
 Statx :: struct {
     mask: u32,
@@ -535,7 +535,7 @@ Statx :: struct {
     dev_major: u32,
     dev_minor: u32,
     __pad2: [14]u64,
-};
+}
 
 stat :: fn (path: [*]const u8, statbuf: *Stat) usize {
     return syscall2(SYS.stat, path as usize, statbuf as usize);

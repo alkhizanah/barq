@@ -1,7 +1,7 @@
 Token :: struct {
     tag: TokenTag,
     range: TokenRange,
-};
+}
 
 TokenTag :: enum {
     eof,
@@ -54,17 +54,17 @@ TokenTag :: enum {
     left_shift_assign,
     right_shift_assign,
     assign,
-};
+}
 
 TokenRange :: struct {
     start: u32,
     end: u32,
-};
+}
 
 Lexer :: struct {
     index: u32,
     buffer: [*]const u8,
-};
+}
 
 LexerState :: enum {
     start,
@@ -93,7 +93,7 @@ LexerState :: enum {
     bool_not,
     period,
     double_period,
-};
+}
 
 next :: fn (self: *Lexer) Token {
     result: Token;
