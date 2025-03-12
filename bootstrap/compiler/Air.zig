@@ -13,17 +13,19 @@ const Air = @This();
 
 global_assembly: std.ArrayListUnmanaged(u8) = .{},
 
+blocks: std.ArrayListUnmanaged(std.ArrayListUnmanaged(Instruction)) = .{},
+
 variables: std.StringArrayHashMapUnmanaged(Variable) = .{},
 functions: std.StringArrayHashMapUnmanaged(Function) = .{},
 
 pub const Variable = struct {
     type_id: u32,
-    maybe_initializer: ?Instruction = null,
+    initializer: ?Instruction = null,
 };
 
 pub const Function = struct {
     type_id: u32,
-    instructions: []Instruction,
+    body_block: ?u32,
 };
 
 pub const Instruction = union(enum) {
@@ -95,18 +97,18 @@ pub const Instruction = union(enum) {
     get_field_ptr: u32,
     /// Make a slice out of a "size many" pointer
     slice,
-    /// Start a new block
+    /// Nest blocks inside each other
     block: u32,
-    /// Unconditionally branch to a block
-    br: u32,
-    /// Conditionally branch to a block, condition is on the stack
-    cond_br: CondBr,
-    /// Switch on value to branch to a block
+    /// Loop while the value in `condition_block` is true
+    loop: Loop,
+    /// Skip this iteration and continue the loop, this is only emitted if we are in a loop block
+    @"continue",
+    /// Break this loop, this is only emitted if we are in a loop block
+    @"break",
+    /// If the value on top of the stack is true, go to the `then_block` else go to `else_block`, get a value if there is any
+    conditional: Conditional,
+    /// Switch on value to branch to a block, get a value if there is any
     @"switch": Switch,
-    /// Start a new scope
-    start_scope,
-    /// End a scope
-    end_scope,
     /// Return out of the function with a value on the stack
     ret,
     /// Return out of the function without a value
@@ -124,13 +126,18 @@ pub const Instruction = union(enum) {
         };
     };
 
-    pub const CondBr = struct {
-        true_id: u32,
-        false_id: u32,
+    pub const Loop = struct {
+        condition_block: u32,
+        body_block: u32,
+    };
+
+    pub const Conditional = struct {
+        then_block: u32,
+        else_block: ?u32,
     };
 
     pub const Switch = struct {
-        case_block_ids: []u32,
-        else_block_id: u32,
+        case_blocks: []u32,
+        else_block: u32,
     };
 };

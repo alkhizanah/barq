@@ -522,6 +522,7 @@ pub const Cli = struct {
 
         const module_id = compilation.putModule(.{
             .file = compilation_file,
+            .sir = sir_parser.sir,
             .scope = &scope,
         }) catch |err| {
             std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
@@ -539,7 +540,7 @@ pub const Cli = struct {
 
         defer sema.deinit();
 
-        sema.analyze(sir_parser.sir) catch |err| switch (err) {
+        sema.analyze() catch |err| switch (err) {
             error.OutOfMemory => {
                 std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 

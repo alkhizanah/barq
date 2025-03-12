@@ -29,19 +29,20 @@ pub const Pool = struct {
     modules: std.StringArrayHashMapUnmanaged(Module) = .{},
     lazy_units: std.StringHashMapUnmanaged(LazyUnit) = .{},
     types: std.ArrayHashMapUnmanaged(Type, void, Type.HashContext, false) = .{},
-    integers: std.AutoArrayHashMapUnmanaged(i128, void) = .{},
+    ints: std.AutoArrayHashMapUnmanaged(i128, void) = .{},
     bytes: std.ArrayListUnmanaged(u8) = .{},
 
     pub const Module = struct {
         file: File,
+        sir: Sir,
         scope: *Sema.Scope,
     };
 
     pub const LazyUnit = struct {
         owner_id: u32,
         token_start: u32,
-        type_instructions: []const Sir.Instruction,
-        value_instructions: []const Sir.Instruction,
+        type_block: ?u32 = null,
+        value_block: ?u32 = null,
     };
 };
 
@@ -70,11 +71,11 @@ pub inline fn getTypeFromId(self: Compilation, id: u32) Type {
 }
 
 pub inline fn putInt(self: *Compilation, int: i128) std.mem.Allocator.Error!u32 {
-    return @intCast((try self.pool.integers.getOrPut(self.allocator, int)).index);
+    return @intCast((try self.pool.ints.getOrPut(self.allocator, int)).index);
 }
 
 pub inline fn getIntFromId(self: Compilation, id: u32) i128 {
-    return self.pool.integers.keys()[id];
+    return self.pool.ints.keys()[id];
 }
 
 pub fn makeStringType(self: *Compilation, len: usize) std.mem.Allocator.Error!Type {
@@ -166,10 +167,10 @@ pub fn emit(
     output_kind: root.OutputKind,
     code_model: root.CodeModel,
 ) std.mem.Allocator.Error!void {
-    var backend = try LlvmBackend.init(self.allocator, self);
+    var backend = try LlvmBackend.init(self.allocator, self, air);
     defer backend.deinit();
 
-    try backend.render(air);
+    try backend.render();
 
     try backend.emit(output_file_path, output_kind, code_model);
 }

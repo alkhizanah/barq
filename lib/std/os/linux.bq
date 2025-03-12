@@ -404,7 +404,7 @@ syscall3 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize) usize {
     return asm {
         "syscall"
         : "={rax}" (usize)
-        : "{rax}" (code),
+        : "{rax}" (code as usize),
           "{rdi}" (arg1),
           "{rsi}" (arg2),
           "{rdx}" (arg3),

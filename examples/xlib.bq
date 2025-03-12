@@ -54,8 +54,8 @@ main :: fn () u8 @foreign("main") {
     return 0;
 }
 
-XDisplay :: struct {};
-XGraphicsContext :: struct {};
+XDisplay :: struct {}
+XGraphicsContext :: struct {}
 
 XID :: c_ulong;
 XWindow :: XID;

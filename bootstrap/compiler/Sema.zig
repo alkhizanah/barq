@@ -23,15 +23,14 @@ compilation: *Compilation,
 module: *Compilation.Pool.Module,
 module_id: u32,
 
+sir: Sir,
+
 air: *Air,
-air_instructions: std.ArrayListUnmanaged(Air.Instruction) = .{},
+air_instructions: *std.ArrayListUnmanaged(Air.Instruction) = undefined,
 
 stack: std.ArrayListUnmanaged(Value) = .{},
 
 scope: *Scope,
-allocated_scopes: std.ArrayListUnmanaged(Scope) = .{},
-
-blocks_queue: Queue(u32) = .{},
 
 function_type: Type.Function = undefined,
 
@@ -44,7 +43,7 @@ pub const ErrorInfo = struct {
 
 pub const Error = error{ WithMessage, WithoutMessage } || std.mem.Allocator.Error;
 
-pub const Scope = Symbol.Scope(Sema.Variable);
+pub const Scope = Symbol.Scope(Variable);
 
 const Value = union(enum(u8)) {
     string: Range,
@@ -134,6 +133,7 @@ pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, module_id: 
         .compilation = compilation,
         .module = module,
         .module_id = module_id,
+        .sir = module.sir,
         .air = air,
         .scope = module.scope,
     };
@@ -145,7 +145,6 @@ pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, module_id: 
 
 pub fn deinit(self: *Sema) void {
     self.stack.deinit(self.allocator);
-    self.allocated_scopes.deinit(self.allocator);
 }
 
 fn putBuiltinConstants(self: *Sema) std.mem.Allocator.Error!void {
@@ -275,13 +274,13 @@ fn putBuiltinConstants(self: *Sema) std.mem.Allocator.Error!void {
     }
 }
 
-pub fn hoist(self: *Sema, sir: Sir) std.mem.Allocator.Error!void {
-    try self.air.global_assembly.appendSlice(self.allocator, sir.global_assembly.items);
+pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
+    try self.air.global_assembly.appendSlice(self.allocator, self.sir.global_assembly.items);
 
-    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(sir.constants.count() + sir.variables.count()));
-    try self.compilation.pool.lazy_units.ensureUnusedCapacity(self.allocator, @intCast(sir.constants.count() + sir.variables.count()));
+    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
+    try self.compilation.pool.lazy_units.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
 
-    for (sir.constants.keys(), sir.constants.values()) |constant_name, constant| {
+    for (self.sir.constants.keys(), self.sir.constants.values()) |constant_name, constant| {
         const constant_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.module.file.path, constant_name });
 
         self.scope.putAssumeCapacity(constant_name, .{
@@ -293,12 +292,11 @@ pub fn hoist(self: *Sema, sir: Sir) std.mem.Allocator.Error!void {
         self.compilation.pool.lazy_units.putAssumeCapacity(constant_air_name, .{
             .owner_id = self.module_id,
             .token_start = constant.token_start,
-            .type_instructions = &.{},
-            .value_instructions = sir.instructions.items[constant.value_instructions.start..constant.value_instructions.end],
+            .value_block = constant.value_block,
         });
     }
 
-    for (sir.variables.keys(), sir.variables.values()) |variable_name, variable| {
+    for (self.sir.variables.keys(), self.sir.variables.values()) |variable_name, variable| {
         const variable_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.module.file.path, variable_name });
 
         self.scope.putAssumeCapacity(variable_name, .{
@@ -309,34 +307,36 @@ pub fn hoist(self: *Sema, sir: Sir) std.mem.Allocator.Error!void {
         self.compilation.pool.lazy_units.putAssumeCapacity(variable_air_name, .{
             .owner_id = self.module_id,
             .token_start = variable.token_start,
-            .type_instructions = sir.instructions.items[variable.type_instructions.start..variable.type_instructions.end],
-            .value_instructions = sir.instructions.items[variable.value_instructions.start..variable.value_instructions.end],
+            .type_block = variable.type_block,
+            .value_block = variable.value_block,
         });
     }
 }
 
-pub fn analyze(self: *Sema, sir: Sir) Error!void {
-    try self.hoist(sir);
+pub fn analyze(self: *Sema) Error!void {
+    try self.hoist();
 
-    for (sir.constants.keys()) |constant_name| {
+    for (self.sir.constants.keys()) |constant_name| {
         var variable = self.scope.get(constant_name).?;
 
         if (self.compilation.pool.lazy_units.get(variable.air_name)) |lazy_unit| {
-            try self.analyzeLazyUnit(&variable, lazy_unit);
-            self.scope.getPtr(constant_name).?.* = variable;
-
             _ = self.compilation.pool.lazy_units.remove(variable.air_name);
+
+            try self.analyzeLazyUnit(&variable, lazy_unit);
+
+            self.scope.getPtr(constant_name).?.* = variable;
         }
     }
 
-    for (sir.variables.keys()) |variable_name| {
+    for (self.sir.variables.keys()) |variable_name| {
         var variable = self.scope.get(variable_name).?;
 
         if (self.compilation.pool.lazy_units.get(variable.air_name)) |lazy_unit| {
-            try self.analyzeLazyUnit(&variable, lazy_unit);
-            self.scope.getPtr(variable_name).?.* = variable;
-
             _ = self.compilation.pool.lazy_units.remove(variable.air_name);
+
+            try self.analyzeLazyUnit(&variable, lazy_unit);
+
+            self.scope.getPtr(variable_name).?.* = variable;
         }
     }
 }
@@ -377,19 +377,13 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
 
         while (self.scope.maybe_parent) |parent| self.scope = parent;
 
-        const previous_air_instructions = self.air_instructions;
+        const previous_stack = self.stack;
+        defer self.stack = previous_stack;
 
-        defer {
-            self.air_instructions.deinit(self.allocator);
-            self.air_instructions = previous_air_instructions;
-        }
-
-        self.air_instructions = .{};
+        self.stack = .{};
 
         if (variable.is_const) {
-            for (lazy_unit.value_instructions) |instruction| {
-                try self.analyzeInstruction(instruction);
-            }
+            _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(lazy_unit.value_block.?));
 
             const value = self.stack.pop();
 
@@ -404,14 +398,11 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
 
             variable.value = value;
         } else {
-            for (lazy_unit.value_instructions) |instruction| {
-                try self.analyzeInstruction(instruction);
-            }
+            const maybe_value = if (lazy_unit.value_block) |value_block| blk: {
+                _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(value_block));
 
-            const maybe_value = if (lazy_unit.value_instructions.len == 0)
-                null
-            else
-                self.stack.pop();
+                break :blk self.stack.pop();
+            } else null;
 
             const maybe_initializer: ?Air.Instruction = if (maybe_value) |value|
                 switch (value) {
@@ -439,12 +430,8 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
             else
                 null;
 
-            const type_id = if (lazy_unit.type_instructions.len == 0)
-                try self.getTypeIdFromValue(maybe_value.?)
-            else blk: {
-                for (lazy_unit.type_instructions) |instruction| {
-                    try self.analyzeInstruction(instruction);
-                }
+            const type_id = if (lazy_unit.type_block) |type_block| blk: {
+                _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(type_block));
 
                 const type_id = try self.popType(lazy_unit.token_start);
 
@@ -453,7 +440,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
                 }
 
                 break :blk type_id;
-            };
+            } else try self.getTypeIdFromValue(maybe_value.?);
 
             const @"type" = self.compilation.getTypeFromId(type_id);
 
@@ -470,7 +457,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
 
             try self.air.variables.put(self.allocator, variable.air_name, .{
                 .type_id = type_id,
-                .maybe_initializer = maybe_initializer,
+                .initializer = maybe_initializer,
             });
         }
     } else {
@@ -510,7 +497,8 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
         .array_type => |token_start| try self.analyzeArrayType(token_start),
         .pointer_type => |pointer_type| try self.analyzePointerType(pointer_type),
         .struct_type => |struct_type| try self.analyzeStructType(struct_type),
-        .enum_type => |enum_type| try self.analyzeEnumType(enum_type),
+        .enum_type => |enum_type| try self.analyzeEnumType(false, enum_type),
+        .enum_type_infer => |enum_type| try self.analyzeEnumType(true, enum_type),
         .function_type => |function_type| try self.analyzeFunctionType(function_type),
 
         .negate => |token_start| try self.analyzeNegate(token_start),
@@ -562,31 +550,14 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
         .make_slice => |token_start| try self.analyzeMakeSlice(token_start),
 
         .block => |block| try self.analyzeBlock(block),
-        .br => |br| try self.analyzeBr(br),
-        .cond_br => |cond_br| try self.analyzeCondBr(cond_br),
+        .loop => |loop| try self.analyzeLoop(loop),
+        .@"break" => try self.air_instructions.append(self.allocator, .@"break"),
+        .@"continue" => try self.air_instructions.append(self.allocator, .@"continue"),
+        .conditional => |conditional| try self.analyzeConditional(conditional),
         .@"switch" => |@"switch"| try self.analyzeSwitch(@"switch"),
-
-        .start_scope => try self.modifyScope(true),
-        .end_scope => try self.modifyScope(false),
 
         .ret => |token_start| try self.analyzeReturn(true, token_start),
         .ret_void => |token_start| try self.analyzeReturn(false, token_start),
-    }
-}
-
-fn modifyScope(self: *Sema, comptime start: bool) Error!void {
-    if (start) {
-        const new_scope = try self.allocated_scopes.addOne(self.allocator);
-        new_scope.* = .{ .maybe_parent = self.scope };
-        self.scope = new_scope;
-
-        try self.air_instructions.append(self.allocator, .start_scope);
-    } else {
-        self.scope.deinit(self.allocator);
-        self.scope = self.scope.maybe_parent.?;
-        _ = self.allocated_scopes.pop();
-
-        try self.air_instructions.append(self.allocator, .end_scope);
     }
 }
 
@@ -634,8 +605,9 @@ threadlocal var prng = std.Random.DefaultPrng.init(0);
 
 fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
     const previous_function_type = self.function_type;
-    const function_type_id = try self.popType(function.token_start);
     defer self.function_type = previous_function_type;
+
+    const function_type_id = try self.popType(function.token_start);
 
     self.function_type = self.compilation.getTypeFromId(function_type_id).function;
 
@@ -644,54 +616,9 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
 
     while (self.scope.maybe_parent) |parent| self.scope = parent;
 
-    const previous_allocated_scopes = self.allocated_scopes;
-    defer {
-        self.allocated_scopes.deinit(self.allocator);
-        self.allocated_scopes = previous_allocated_scopes;
-    }
-
-    self.allocated_scopes = .{};
-
-    const previous_blocks_queue = self.blocks_queue;
-    defer self.blocks_queue = previous_blocks_queue;
-
-    self.blocks_queue = .{};
-
-    var blocks: std.AutoHashMapUnmanaged(u32, Range) = .{};
-    defer blocks.deinit(self.allocator);
-
-    var current_block: u32 = 0;
-    var current_block_start: u32 = 0;
-
-    var scopes_count: usize = 0;
-
-    for (function.instructions, 0..) |instruction, i|
-        switch (instruction) {
-            .block => |block_id| {
-                try blocks.put(self.allocator, current_block, .{
-                    .start = current_block_start,
-                    .end = @intCast(i),
-                });
-
-                current_block = block_id;
-                current_block_start = @intCast(i);
-            },
-
-            .start_scope => scopes_count += 1,
-
-            else => {},
-        };
-
-    try blocks.put(self.allocator, current_block, .{
-        .start = current_block_start,
-        .end = @intCast(function.instructions.len),
-    });
-
-    try self.allocated_scopes.ensureUnusedCapacity(self.allocator, scopes_count);
-
-    const air_name = if (function.maybe_foreign) |foreign|
+    const air_name = if (function.foreign) |foreign|
         try self.allocator.dupe(u8, self.compilation.getStringFromRange(foreign))
-    else if (function.maybe_named) |name|
+    else if (function.name) |name|
         try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.module.file.path, name.buffer })
     else
         try std.fmt.allocPrint(self.allocator, "__anon_function_{}", .{prng.random().int(u32)});
@@ -700,41 +627,26 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
 
     try self.air.functions.put(self.allocator, air_name, .{
         .type_id = function_type_id,
-        .instructions = &.{},
+        .body_block = null,
     });
 
-    const instructions_start = self.air_instructions.items.len;
+    if (function.body_block) |body_block| {
+        var scope: Scope = .{ .maybe_parent = self.scope };
+        self.scope = &scope;
+        defer self.scope = self.scope.maybe_parent.?;
 
-    try self.modifyScope(true);
-
-    if (function.maybe_named) |name| {
-        try self.scope.put(self.allocator, name.buffer, .{
-            .is_const = true,
-            .air_name = air_name,
-            .value = .{ .function = function_id },
-        });
-    }
-
-    // Enqueue the root block to start the analysis of function instructions
-    // each block that ends with `switch` or `br` or `cond_br` would make us continue the analysis
-    try self.blocks_queue.enqueue(self.allocator, 0);
-
-    while (self.blocks_queue.dequeue(self.allocator)) |block_id| {
-        // Check if it is not already emitted, as multiple blocks may branch into the same block
-        if (blocks.get(block_id)) |block| {
-            for (function.instructions[block.start..block.end]) |instruction| {
-                try self.analyzeInstruction(instruction);
-            }
-
-            _ = blocks.remove(block_id);
+        if (function.name) |name| {
+            try self.scope.put(self.allocator, name.buffer, .{
+                .is_const = true,
+                .air_name = air_name,
+                .value = .{ .function = function_id },
+            });
         }
+
+        const analyzed_body_block = try self.analyzeBlockInstructionsOldScope(body_block);
+
+        self.air.functions.getPtr(air_name).?.body_block = analyzed_body_block;
     }
-
-    try self.modifyScope(false);
-
-    self.air.functions.values()[function_id].instructions = try self.allocator.dupe(Air.Instruction, self.air_instructions.items[instructions_start..]);
-
-    self.air_instructions.shrinkRetainingCapacity(instructions_start);
 
     try self.air_instructions.append(self.allocator, .{ .get_variable_ptr = air_name });
 
@@ -803,7 +715,7 @@ fn analyzeStructType(self: *Sema, struct_type: Sir.Instruction.StructType) Error
     });
 }
 
-fn analyzeEnumType(self: *Sema, enum_type: Sir.Instruction.EnumType) Error!void {
+fn analyzeEnumType(self: *Sema, comptime infer: bool, enum_type: Sir.Instruction.EnumType) Error!void {
     var minimum_value: i128 = std.math.maxInt(i128);
     var minimum_value_int_id: u32 = 0;
     var maximum_value: i128 = std.math.minInt(i128);
@@ -825,7 +737,9 @@ fn analyzeEnumType(self: *Sema, enum_type: Sir.Instruction.EnumType) Error!void 
 
     var backing_type_id: u32 = 0;
 
-    if (self.stack.items.len > 0) {
+    if (infer) {
+        backing_type_id = try self.compilation.putType(Type.intFittingRange(minimum_value, maximum_value));
+    } else {
         backing_type_id = try self.popType(enum_type.token_start);
 
         const backing_type = self.compilation.getTypeFromId(backing_type_id);
@@ -834,8 +748,6 @@ fn analyzeEnumType(self: *Sema, enum_type: Sir.Instruction.EnumType) Error!void 
 
         try self.checkUnaryImplicitCast(.{ .int = minimum_value_int_id }, backing_type, enum_type.token_start);
         try self.checkUnaryImplicitCast(.{ .int = maximum_value_int_id }, backing_type, enum_type.token_start);
-    } else {
-        backing_type_id = try self.compilation.putType(Type.intFittingRange(minimum_value, maximum_value));
     }
 
     try self.stack.append(
@@ -978,13 +890,21 @@ fn analyzeBitwiseArithmetic(self: *Sema, comptime operation: BitwiseArithmeticOp
 
     switch (try self.checkBinaryImplicitCast(lhs, rhs, token_start)) {
         .cast_lhs_to_rhs => {
-            rhs_type_id = lhs_type_id;
-            rhs_type = lhs_type;
+            lhs_type_id = rhs_type_id;
+            lhs_type = rhs_type;
+
+            try self.air_instructions.appendSlice(self.allocator, &.{
+                .{ .reverse = 2 },
+                .{ .cast = rhs_type_id },
+                .{ .reverse = 2 },
+            });
         },
 
         .cast_rhs_to_lhs => {
-            lhs_type_id = lhs_type_id;
-            lhs_type = lhs_type;
+            rhs_type_id = lhs_type_id;
+            rhs_type = lhs_type;
+
+            try self.air_instructions.append(self.allocator, .{ .cast = lhs_type_id });
         },
 
         .none => {},
@@ -1154,12 +1074,8 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
         if (self.compilation.getModulePtrFromId(rhs.module_id).scope.get(name.buffer)) |module_variable| {
             var mutable_module_variable = module_variable;
             try self.analyzeGet(&mutable_module_variable, name);
-
-            return self.compilation.getModulePtrFromId(rhs.module_id).scope.put(
-                self.allocator,
-                name.buffer,
-                mutable_module_variable,
-            );
+            self.compilation.getModulePtrFromId(rhs.module_id).scope.getPtr(name.buffer).?.* = mutable_module_variable;
+            return;
         }
     } else if (rhs == .type_id and self.compilation.getTypeFromId(rhs.type_id) == .@"enum") {
         const rhs_enum_type = self.compilation.getTypeFromId(rhs.type_id).@"enum";
@@ -1310,7 +1226,8 @@ fn analyzeMakeSlice(self: *Sema, token_start: u32) Error!void {
 
     const lhs = self.stack.pop();
     const lhs_type = try self.getTypeFromValue(lhs);
-    const lhs_pointer_type = lhs_type.pointer;
+
+    const lhs_pointer_type = if (lhs_type.getPointer()) |pointer| pointer else try self.reportNotPointer(lhs_type, token_start);
 
     const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
 
@@ -1362,37 +1279,39 @@ fn analyzeReference(self: *Sema, token_start: u32) Error!void {
         .function => {},
 
         else => {
-            const last_instruction = self.air_instructions.items[self.air_instructions.items.len - 1];
+            const last_instruction = &self.air_instructions.items[self.air_instructions.items.len - 1];
 
-            if (last_instruction == .read) {
-                _ = self.air_instructions.pop();
-            } else {
-                const anon_var_name = try std.fmt.allocPrint(self.allocator, "compiler::__anon_{}", .{prng.random().int(u32)});
+            switch (last_instruction.*) {
+                .read => _ = self.air_instructions.pop(),
 
-                if (rhs == .runtime) {
-                    try self.air_instructions.appendSlice(self.allocator, &.{
-                        .{ .variable = .{ anon_var_name, rhs_type_id } },
-                        .{ .get_variable_ptr = anon_var_name },
-                        .duplicate,
-                        .{ .reverse = 3 },
-                        .{ .reverse = 2 },
-                        .write,
-                    });
-                } else {
-                    try self.air.variables.put(self.allocator, anon_var_name, .{
-                        .type_id = rhs_type_id,
-                        .maybe_initializer = switch (rhs) {
-                            .string => |string| .{ .string = string },
-                            .int => |int| .{ .int = int },
-                            .float => |float| .{ .float = float },
-                            .boolean => |boolean| .{ .boolean = boolean },
+                else => {
+                    const anon_var_name = try std.fmt.allocPrint(self.allocator, "compiler::__anon_{}", .{prng.random().int(u32)});
 
-                            else => unreachable,
-                        },
-                    });
+                    if (rhs == .runtime) {
+                        try self.air_instructions.appendSlice(self.allocator, &.{
+                            .{ .variable = .{ anon_var_name, rhs_type_id } },
+                            .{ .get_variable_ptr = anon_var_name },
+                            .duplicate,
+                            .{ .reverse = 3 },
+                            .{ .reverse = 2 },
+                            .write,
+                        });
+                    } else {
+                        try self.air.variables.put(self.allocator, anon_var_name, .{
+                            .type_id = rhs_type_id,
+                            .initializer = switch (rhs) {
+                                .string => |string| .{ .string = string },
+                                .int => |int| .{ .int = int },
+                                .float => |float| .{ .float = float },
+                                .boolean => |boolean| .{ .boolean = boolean },
 
-                    try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .{ .get_variable_ptr = anon_var_name } });
-                }
+                                else => unreachable,
+                            },
+                        });
+
+                        try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .{ .get_variable_ptr = anon_var_name } });
+                    }
+                },
             }
         },
     }
@@ -1441,13 +1360,21 @@ fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token
         } else {
             switch (try self.checkBinaryImplicitCast(lhs, rhs, token_start)) {
                 .cast_lhs_to_rhs => {
-                    rhs_type_id = lhs_type_id;
-                    rhs_type = lhs_type;
+                    lhs_type_id = rhs_type_id;
+                    lhs_type = rhs_type;
+
+                    try self.air_instructions.appendSlice(self.allocator, &.{
+                        .{ .reverse = 2 },
+                        .{ .cast = rhs_type_id },
+                        .{ .reverse = 2 },
+                    });
                 },
 
                 .cast_rhs_to_lhs => {
-                    lhs_type_id = lhs_type_id;
-                    lhs_type = lhs_type;
+                    rhs_type_id = lhs_type_id;
+                    rhs_type = lhs_type;
+
+                    try self.air_instructions.append(self.allocator, .{ .cast = lhs_type_id });
                 },
 
                 .none => {},
@@ -1459,13 +1386,21 @@ fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token
 
         switch (try self.checkBinaryImplicitCast(lhs, rhs, token_start)) {
             .cast_lhs_to_rhs => {
-                rhs_type_id = lhs_type_id;
-                rhs_type = lhs_type;
+                lhs_type_id = rhs_type_id;
+                lhs_type = rhs_type;
+
+                try self.air_instructions.appendSlice(self.allocator, &.{
+                    .{ .reverse = 2 },
+                    .{ .cast = rhs_type_id },
+                    .{ .reverse = 2 },
+                });
             },
 
             .cast_rhs_to_lhs => {
-                lhs_type_id = lhs_type_id;
-                lhs_type = lhs_type;
+                rhs_type_id = lhs_type_id;
+                rhs_type = lhs_type;
+
+                try self.air_instructions.append(self.allocator, .{ .cast = lhs_type_id });
             },
 
             .none => {},
@@ -1572,13 +1507,21 @@ fn analyzeComparison(self: *Sema, comptime operation: ComparisonOperation, token
 
     switch (try self.checkBinaryImplicitCast(lhs, rhs, token_start)) {
         .cast_lhs_to_rhs => {
-            rhs_type_id = lhs_type_id;
-            rhs_type = lhs_type;
+            lhs_type_id = rhs_type_id;
+            lhs_type = rhs_type;
+
+            try self.air_instructions.appendSlice(self.allocator, &.{
+                .{ .reverse = 2 },
+                .{ .cast = rhs_type_id },
+                .{ .reverse = 2 },
+            });
         },
 
         .cast_rhs_to_lhs => {
-            lhs_type_id = lhs_type_id;
-            lhs_type = lhs_type;
+            rhs_type_id = lhs_type_id;
+            rhs_type = lhs_type;
+
+            try self.air_instructions.append(self.allocator, .{ .cast = lhs_type_id });
         },
 
         .none => {},
@@ -1901,6 +1844,7 @@ fn analyzeImport(self: *Sema, token_start: u32) Error!void {
 
         const module_id = try self.compilation.putModule(.{
             .file = import_file,
+            .sir = sir_parser.sir,
             .scope = module_scope_on_heap,
         });
 
@@ -1908,7 +1852,7 @@ fn analyzeImport(self: *Sema, token_start: u32) Error!void {
         self.module = self.compilation.getModulePtrFromId(self.module_id);
 
         var sema = try Sema.init(self.allocator, self.compilation, module_id, self.air);
-        try sema.hoist(sir_parser.sir);
+        try sema.hoist();
         sema.deinit();
 
         try self.stack.append(self.allocator, .{ .module_id = module_id });
@@ -2080,42 +2024,161 @@ fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
 }
 
 fn analyzeBlock(self: *Sema, id: u32) Error!void {
-    try self.air_instructions.append(self.allocator, .{ .block = id });
+    try self.air_instructions.append(self.allocator, .{ .block = try self.analyzeBlockInstructions(id) });
 }
 
-fn analyzeBr(self: *Sema, id: u32) Error!void {
-    try self.blocks_queue.enqueue(self.allocator, id);
-    try self.air_instructions.append(self.allocator, .{ .br = id });
+fn analyzeBlockInstructions(self: *Sema, id: u32) Error!u32 {
+    var scope: Scope = .{ .maybe_parent = self.scope };
+    self.scope = &scope;
+    defer self.scope = self.scope.maybe_parent.?;
+
+    return self.analyzeBlockInstructionsOldScope(id);
 }
 
-fn analyzeCondBr(self: *Sema, cond_br: Sir.Instruction.CondBr) Error!void {
+fn analyzeBlockInstructionsOldScope(self: *Sema, id: u32) Error!u32 {
+    const previous_air_instructions = self.air_instructions;
+    defer self.air_instructions = previous_air_instructions;
+
+    var analyzed_instructions: std.ArrayListUnmanaged(Air.Instruction) = .{};
+    self.air_instructions = &analyzed_instructions;
+
+    const instructions = self.sir.blocks.items[id].items;
+
+    for (instructions) |instruction|
+        try self.analyzeInstruction(instruction);
+
+    try self.air.blocks.append(self.allocator, analyzed_instructions);
+
+    return @intCast(self.air.blocks.items.len - 1);
+}
+
+fn analyzeLoop(self: *Sema, loop: Sir.Instruction.Loop) Error!void {
+    const analyzed_condition_block = try self.analyzeBlockInstructions(loop.condition_block);
+
     const condition = self.stack.pop();
 
-    try self.checkUnaryImplicitCast(condition, .bool, cond_br.token_start);
+    try self.checkUnaryImplicitCast(condition, .bool, loop.token_start);
+
+    const analyzed_body_block = try self.analyzeBlockInstructions(loop.body_block);
+
+    try self.air_instructions.append(self.allocator, .{
+        .loop = .{
+            .condition_block = analyzed_condition_block,
+            .body_block = analyzed_body_block,
+        },
+    });
+}
+
+fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Error!void {
+    const condition = self.stack.pop();
+
+    try self.checkUnaryImplicitCast(condition, .bool, conditional.token_start);
 
     switch (condition) {
         .boolean => |condition_boolean| {
             try self.air_instructions.append(self.allocator, .pop);
 
-            const id = if (condition_boolean)
-                cond_br.true_id
-            else
-                cond_br.false_id;
+            const previous_stack = self.stack;
 
-            try self.blocks_queue.enqueue(self.allocator, id);
-            try self.air_instructions.append(self.allocator, .{ .br = id });
+            self.stack = .{};
+
+            const maybe_analyzed_block = if (condition_boolean)
+                try self.analyzeBlockInstructions(conditional.then_block)
+            else if (conditional.else_block) |else_block|
+                try self.analyzeBlockInstructions(else_block)
+            else
+                null;
+
+            const maybe_value = self.stack.popOrNull();
+
+            self.stack = previous_stack;
+
+            if (maybe_value) |value| {
+                switch (value) {
+                    .module_id, .type_id => {},
+
+                    else => {
+                        var analyzed_block_instructions = self.air.blocks.orderedRemove(maybe_analyzed_block.?);
+                        try self.air_instructions.appendSlice(self.allocator, analyzed_block_instructions.items);
+                        analyzed_block_instructions.deinit(self.allocator);
+                    },
+                }
+
+                try self.stack.append(self.allocator, value);
+            } else {
+                if (maybe_analyzed_block) |analyzed_block| {
+                    try self.air_instructions.append(self.allocator, .{ .block = analyzed_block });
+                }
+
+                try self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(.void) });
+            }
         },
 
         else => {
-            try self.blocks_queue.enqueue(self.allocator, cond_br.true_id);
-            try self.blocks_queue.enqueue(self.allocator, cond_br.false_id);
+            const previous_stack = self.stack;
+
+            self.stack = .{};
+
+            const analyzed_then_block = try self.analyzeBlockInstructions(conditional.then_block);
+            const maybe_then_value = self.stack.popOrNull();
+
+            const maybe_analyzed_else_block = if (conditional.else_block) |else_block|
+                try self.analyzeBlockInstructions(else_block)
+            else
+                null;
+
+            const maybe_else_value = self.stack.popOrNull();
+
+            self.stack = previous_stack;
+
+            if (maybe_then_value) |then_value| {
+                var then_value_type_id = try self.getTypeIdFromValue(then_value);
+
+                const then_value_type = self.compilation.getTypeFromId(then_value_type_id);
+
+                const else_value = maybe_else_value orelse if (then_value_type != .void)
+                    try self.reportIncompatibleTypes(then_value_type, .void, conditional.token_start)
+                else
+                    Value{ .runtime = try self.compilation.putType(.void) };
+
+                const else_value_type_id = try self.getTypeIdFromValue(else_value);
+                const else_value_type = self.compilation.getTypeFromId(else_value_type_id);
+
+                const analyzed_else_block = maybe_analyzed_else_block.?;
+
+                switch (try self.checkBinaryImplicitCast(then_value, else_value, conditional.token_start)) {
+                    .cast_lhs_to_rhs => {
+                        then_value_type_id = else_value_type_id;
+
+                        try self.air.blocks.items[analyzed_then_block].append(self.allocator, .{ .cast = else_value_type_id });
+                    },
+
+                    .cast_rhs_to_lhs => {
+                        try self.air.blocks.items[analyzed_else_block].append(self.allocator, .{ .cast = then_value_type_id });
+                    },
+
+                    .none => if (!then_value_type.eql(self.compilation.*, else_value_type)) {
+                        try self.reportIncompatibleTypes(then_value_type, else_value_type, conditional.token_start);
+                    },
+                }
+
+                try self.stack.append(self.allocator, .{ .runtime = then_value_type_id });
+            } else if (maybe_else_value) |else_value| {
+                const else_value_type = try self.getTypeFromValue(else_value);
+
+                if (else_value_type != .void) {
+                    try self.reportIncompatibleTypes(.void, else_value_type, conditional.token_start);
+                }
+            } else {
+                try self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(.void) });
+            }
 
             try self.air_instructions.append(
                 self.allocator,
                 .{
-                    .cond_br = .{
-                        .true_id = cond_br.true_id,
-                        .false_id = cond_br.false_id,
+                    .conditional = .{
+                        .then_block = analyzed_then_block,
+                        .else_block = maybe_analyzed_else_block,
                     },
                 },
             );
@@ -2124,29 +2187,43 @@ fn analyzeCondBr(self: *Sema, cond_br: Sir.Instruction.CondBr) Error!void {
 }
 
 fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
-    const switched_value = self.stack.pop();
-    const switched_value_type = try self.getTypeFromValue(switched_value);
+    const switched_on_value = self.stack.pop();
+    const switched_on_value_type = try self.getTypeFromValue(switched_on_value);
 
-    try self.checkIntOrBool(switched_value_type, @"switch".token_start);
+    const maybe_switched_on_value_int: ?i128 = if (switched_on_value == .int)
+        self.compilation.getIntFromId(switched_on_value.int)
+    else if (switched_on_value == .boolean)
+        @intFromBool(switched_on_value.boolean)
+    else
+        null;
 
-    var case_values: std.AutoHashMapUnmanaged(i128, void) = .{};
+    try self.checkIntOrBool(switched_on_value_type, @"switch".token_start);
 
-    for (@"switch".case_token_starts, 0..) |case_token_start, i| {
+    var case_values: std.AutoHashMapUnmanaged(i128, u32) = .{};
+    defer case_values.deinit(self.allocator);
+
+    for (@"switch".case_blocks, @"switch".case_token_starts) |case_block, case_token_start| {
         const case_value = self.stack.pop();
 
-        try self.checkUnaryImplicitCast(case_value, switched_value_type, case_token_start);
-
-        if (case_value == .runtime) {
-            self.error_info = .{ .message = "expected switch case value to be compile time known", .source_loc = SourceLoc.find(self.module.file.buffer, case_token_start) };
-
-            return error.WithMessage;
+        if (maybe_switched_on_value_int == null) {
+            try self.checkUnaryImplicitCast(case_value, switched_on_value_type, case_token_start);
         }
 
         const case_value_int = switch (case_value) {
-            .int => |int| int,
+            .int => |id| self.compilation.getIntFromId(id),
             .boolean => |boolean| @as(i128, @intFromBool(boolean)),
 
-            else => unreachable,
+            .runtime => {
+                self.error_info = .{ .message = "expected switch case value to be compile time known", .source_loc = SourceLoc.find(self.module.file.buffer, case_token_start) };
+
+                return error.WithMessage;
+            },
+
+            else => {
+                self.error_info = .{ .message = "expected switch case value to be an integer or a boolean", .source_loc = SourceLoc.find(self.module.file.buffer, case_token_start) };
+
+                return error.WithMessage;
+            },
         };
 
         if (case_values.get(case_value_int) != null) {
@@ -2155,21 +2232,148 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
             return error.WithMessage;
         }
 
-        try case_values.put(self.allocator, case_value_int, {});
-
-        try self.blocks_queue.enqueue(self.allocator, @"switch".case_block_ids[i]);
+        try case_values.put(self.allocator, case_value_int, case_block);
     }
 
-    try self.blocks_queue.enqueue(self.allocator, @"switch".else_block_id);
+    if (maybe_switched_on_value_int) |switched_on_value_int| {
+        const previous_stack = self.stack;
 
-    case_values.deinit(self.allocator);
+        self.stack = .{};
 
-    try self.air_instructions.append(self.allocator, .{
-        .@"switch" = .{
-            .case_block_ids = @"switch".case_block_ids,
-            .else_block_id = @"switch".else_block_id,
-        },
-    });
+        const analyzed_block = try self.analyzeBlockInstructions(case_values.get(switched_on_value_int) orelse @"switch".else_block);
+
+        const maybe_value = self.stack.popOrNull();
+
+        self.stack = previous_stack;
+
+        if (maybe_value) |value| {
+            switch (value) {
+                .module_id, .type_id => {},
+
+                else => {
+                    var analyzed_block_instructions = self.air.blocks.orderedRemove(analyzed_block);
+                    try self.air_instructions.appendSlice(self.allocator, analyzed_block_instructions.items);
+                    analyzed_block_instructions.deinit(self.allocator);
+                },
+            }
+
+            try self.stack.append(self.allocator, value);
+        } else {
+            try self.air_instructions.append(self.allocator, .{ .block = analyzed_block });
+
+            try self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(.void) });
+        }
+    } else {
+        var analyzed_case_blocks: std.ArrayListUnmanaged(u32) = .{};
+
+        var result_type_id: u32 = undefined;
+        var result_type: Type = undefined;
+
+        for (@"switch".case_blocks, @"switch".case_token_starts, 0..) |case_block, case_token_start, i| {
+            const previous_stack = self.stack;
+
+            self.stack = .{};
+
+            const analyzed_case_block = try self.analyzeBlockInstructions(case_block);
+
+            const next_result_type_id = if (self.stack.popOrNull()) |value|
+                try self.getTypeIdFromValue(value)
+            else
+                try self.compilation.putType(.void);
+
+            self.stack = previous_stack;
+
+            const next_result_type = self.compilation.getTypeFromId(next_result_type_id);
+
+            if (i == 0) {
+                result_type_id = next_result_type_id;
+                result_type = next_result_type;
+            } else {
+                switch (try self.checkBinaryImplicitCast(.{ .runtime = result_type_id }, .{ .runtime = next_result_type_id }, case_token_start)) {
+                    .cast_lhs_to_rhs => {
+                        result_type_id = next_result_type_id;
+                        result_type = next_result_type;
+
+                        for (0..i) |j| {
+                            const previous_analyzed_case_block = self.air.blocks.items.len - j - 2;
+
+                            try self.air.blocks.items[previous_analyzed_case_block].append(self.allocator, .{ .cast = next_result_type_id });
+                        }
+                    },
+
+                    .cast_rhs_to_lhs => {
+                        try self.air.blocks.items[analyzed_case_block].append(self.allocator, .{ .cast = result_type_id });
+                    },
+
+                    .none => if (!result_type.eql(self.compilation.*, next_result_type)) {
+                        try self.reportIncompatibleTypes(result_type, next_result_type, case_token_start);
+                    },
+                }
+            }
+
+            try analyzed_case_blocks.append(self.allocator, analyzed_case_block);
+        }
+
+        const analyzed_else_block = blk: {
+            const previous_stack = self.stack;
+
+            self.stack = .{};
+
+            const analyzed_else_block = try self.analyzeBlockInstructions(@"switch".else_block);
+
+            const next_result_type_id = if (self.stack.popOrNull()) |value|
+                try self.getTypeIdFromValue(value)
+            else
+                try self.compilation.putType(.void);
+
+            self.stack = previous_stack;
+
+            if (analyzed_case_blocks.items.len > 0) {
+                const next_result_type = self.compilation.getTypeFromId(next_result_type_id);
+
+                const case_token_start = @"switch".token_start;
+
+                switch (try self.checkBinaryImplicitCast(.{ .runtime = result_type_id }, .{ .runtime = next_result_type_id }, case_token_start)) {
+                    .cast_lhs_to_rhs => {
+                        result_type_id = next_result_type_id;
+                        result_type = next_result_type;
+
+                        for (0..analyzed_case_blocks.items.len) |j| {
+                            const previous_analyzed_case_block = self.air.blocks.items.len - j - 2;
+
+                            try self.air.blocks.items[previous_analyzed_case_block].append(self.allocator, .{ .cast = next_result_type_id });
+                        }
+                    },
+
+                    .cast_rhs_to_lhs => {
+                        try self.air.blocks.items[analyzed_else_block].append(self.allocator, .{ .cast = result_type_id });
+                    },
+
+                    .none => if (!result_type.eql(self.compilation.*, next_result_type)) {
+                        try self.reportIncompatibleTypes(result_type, next_result_type, case_token_start);
+                    },
+                }
+            } else {
+                result_type_id = next_result_type_id;
+            }
+
+            break :blk analyzed_else_block;
+        };
+
+        analyzed_case_blocks.shrinkAndFree(self.allocator, analyzed_case_blocks.items.len);
+
+        try self.air_instructions.append(self.allocator, .{
+            .@"switch" = .{
+                .case_blocks = analyzed_case_blocks.items,
+                .else_block = analyzed_else_block,
+            },
+        });
+
+        try self.stack.append(self.allocator, .{ .runtime = result_type_id });
+    }
+
+    self.allocator.free(@"switch".case_blocks);
+    self.allocator.free(@"switch".case_token_starts);
 }
 
 fn analyzeReturn(self: *Sema, comptime with_value: bool, token_start: u32) Error!void {

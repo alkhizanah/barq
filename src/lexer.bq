@@ -23,6 +23,7 @@ TokenTag :: enum {
     double_period,
     triple_period,
     colon,
+    double_colon,
     semicolon,
     fat_arrow,
     plus,
@@ -43,6 +44,7 @@ TokenTag :: enum {
     right_shift,
     eql,
     not_eql,
+    colon_assign,
     plus_assign,
     minus_assign,
     star_assign,
@@ -93,6 +95,7 @@ LexerState :: enum {
     bool_not,
     period,
     double_period,
+    colon,
 }
 
 next :: fn (self : *Lexer) Token {
@@ -318,10 +321,8 @@ next :: fn (self : *Lexer) Token {
                 ':' => {
                     result.tag = TokenTag.colon;
                     result.range.start = self.index;
-                    self.index += 1;
-                    result.range.end = self.index;
 
-                    break;
+                    state = LexerState.colon;
                 },
 
                 '<' => {
@@ -719,6 +720,30 @@ next :: fn (self : *Lexer) Token {
             LexerState.double_period => switch ch {
                 '.' => {
                     result.tag = TokenTag.triple_period;
+                    self.index += 1;
+                    result.range.end = self.index;
+
+                    break;
+                },
+
+                else => {
+                    result.range.end = self.index;
+
+                    break;
+                },
+            },
+
+            LexerState.colon => switch ch {
+                ':' => {
+                    result.tag = TokenTag.double_colon;
+                    self.index += 1;
+                    result.range.end = self.index;
+
+                    break;
+                },
+
+                '=' => {
+                    result.tag = TokenTag.colon_assign;
                     self.index += 1;
                     result.range.end = self.index;
 
