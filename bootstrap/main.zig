@@ -6,10 +6,6 @@ const Air = @import("compiler/Air.zig");
 const Sema = @import("compiler/Sema.zig");
 const Sir = @import("compiler/Sir.zig");
 
-pub const std_options: std.Options = .{
-    .fmt_max_depth = 10000000000,
-};
-
 pub const OutputKind = enum {
     assembly,
     object,

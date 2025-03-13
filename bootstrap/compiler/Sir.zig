@@ -1476,17 +1476,7 @@ pub const Parser = struct {
             return error.WithMessage;
         }
 
-        var input_constraints: []Range = &.{};
-        var output_constraint: ?Range = null;
-        var clobbers: []Range = &.{};
-
-        while (!self.eat(.close_brace)) {
-            if (self.tokenTag() != .string_literal) {
-                self.error_info = .{ .message = "expected a valid string", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
-
-                return error.WithMessage;
-            }
-
+        while (self.tokenTag() == .string_literal) {
             try self.parseString();
 
             const string = self.sir_instructions.pop().string;
@@ -1496,7 +1486,13 @@ pub const Parser = struct {
             self.compilation.pool.bytes.shrinkRetainingCapacity(string.start);
 
             try content.append(self.allocator, '\n');
+        }
 
+        var input_constraints: []Range = &.{};
+        var output_constraint: ?Range = null;
+        var clobbers: []Range = &.{};
+
+        if (content.items.len > 0) {
             if (self.eat(.colon)) {
                 if (self.tokenTag() != .colon) {
                     output_constraint = try self.parseInlineAssemblyConstraint();
@@ -1514,12 +1510,12 @@ pub const Parser = struct {
                     clobbers = try self.parseInlineAssemblyClobbers();
                 }
             }
+        }
 
-            if (self.tokenTag() != .close_brace and (self.tokenTag() != .colon or self.tokenTag() != .string_literal)) {
-                self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+        if (!self.eat(.close_brace)) {
+            self.error_info = .{ .message = "expected a '}'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
-                return error.WithMessage;
-            }
+            return error.WithMessage;
         }
 
         content.shrinkAndFree(self.allocator, content.items.len);
