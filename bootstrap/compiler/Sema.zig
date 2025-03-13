@@ -281,7 +281,7 @@ pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
     try self.compilation.pool.lazy_units.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
 
     for (self.sir.constants.keys(), self.sir.constants.values()) |constant_name, constant| {
-        const constant_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.module.file.path, constant_name });
+        const constant_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{}", .{ constant_name, self.module_id });
 
         self.scope.putAssumeCapacity(constant_name, .{
             .is_const = true,
@@ -297,7 +297,7 @@ pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
     }
 
     for (self.sir.variables.keys(), self.sir.variables.values()) |variable_name, variable| {
-        const variable_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.module.file.path, variable_name });
+        const variable_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{}", .{ variable_name, self.module_id });
 
         self.scope.putAssumeCapacity(variable_name, .{
             .air_name = variable_air_name,
@@ -619,7 +619,7 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
     const air_name = if (function.foreign) |foreign|
         try self.allocator.dupe(u8, self.compilation.getStringFromRange(foreign))
     else if (function.name) |name|
-        try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.module.file.path, name.buffer })
+        try std.fmt.allocPrint(self.allocator, "{s}.{}", .{ name.buffer, self.module_id })
     else
         try std.fmt.allocPrint(self.allocator, "__anon_function_{}", .{prng.random().int(u32)});
 
@@ -1970,11 +1970,9 @@ fn analyzeConstant(self: *Sema, name: Name) Error!void {
         return error.WithMessage;
     }
 
-    const air_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ self.module.file.path, name.buffer });
-
     try self.scope.put(self.allocator, name.buffer, .{
         .is_const = true,
-        .air_name = air_name,
+        .air_name = name.buffer,
         .value = value,
     });
 }
