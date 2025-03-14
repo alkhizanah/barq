@@ -169,9 +169,6 @@ pub fn emit(
 ) std.mem.Allocator.Error!void {
     var backend = try LlvmBackend.init(self.allocator, self, air);
     defer backend.deinit();
-
-    try backend.render();
-
     try backend.emit(output_file_path, output_kind, code_model);
 }
 

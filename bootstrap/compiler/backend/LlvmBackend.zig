@@ -79,6 +79,72 @@ pub fn emit(
     output_kind: root.OutputKind,
     code_model: root.CodeModel,
 ) Error!void {
+    c.LLVMSetModuleInlineAsm2(self.module, self.air.global_assembly.items.ptr, self.air.global_assembly.items.len);
+
+    var global_scope: Scope = .{};
+    self.scope = &global_scope;
+
+    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(self.air.variables.count() + self.air.functions.count()));
+
+    for (self.air.variables.keys(), self.air.variables.values()) |variable_name, variable| {
+        const variable_name_z = try self.allocator.dupeZ(u8, variable_name);
+        defer self.allocator.free(variable_name_z);
+
+        const variable_type = self.compilation.getTypeFromId(variable.type_id);
+
+        const llvm_type = try self.llvmType(variable_type);
+
+        const llvm_pointer = c.LLVMAddGlobal(self.module, llvm_type, variable_name_z.ptr);
+
+        if (variable.initializer) |initializer| {
+            try self.emitInstruction(initializer);
+
+            var initializer_register = self.stack.pop();
+
+            try self.unaryImplicitCast(&initializer_register, variable.type_id);
+
+            _ = c.LLVMSetInitializer(llvm_pointer, initializer_register.value);
+        }
+
+        self.scope.putAssumeCapacity(variable_name, .{
+            .type_id = variable.type_id,
+            .pointer = llvm_pointer,
+        });
+    }
+
+    for (self.air.functions.keys(), self.air.functions.values()) |function_name, function| {
+        const function_name_z = try self.allocator.dupeZ(u8, function_name);
+        defer self.allocator.free(function_name_z);
+
+        const function_type = self.compilation.getTypeFromId(function.type_id);
+
+        const llvm_type = try self.llvmType(function_type);
+
+        const llvm_pointer = c.LLVMAddFunction(self.module, function_name_z.ptr, llvm_type);
+
+        self.scope.putAssumeCapacity(function_name, .{
+            .type_id = function.type_id,
+            .pointer = llvm_pointer,
+        });
+    }
+
+    for (self.air.functions.keys(), self.air.functions.values()) |function_name, function| {
+        const llvm_pointer = self.scope.get(function_name).?.pointer;
+
+        const function_type = self.compilation.getTypeFromId(function.type_id);
+
+        self.function_value = llvm_pointer;
+        self.function_type = function_type.function;
+
+        if (function.body_block) |body_block| {
+            const llvm_entry_block = c.LLVMAppendBasicBlockInContext(self.context, self.function_value, "");
+
+            c.LLVMPositionBuilderAtEnd(self.builder, llvm_entry_block);
+
+            _ = try self.emitBlock(body_block);
+        }
+    }
+
     c.LLVMInitializeAllTargetInfos();
     c.LLVMInitializeAllTargets();
     c.LLVMInitializeAllTargetMCs();
@@ -131,138 +197,70 @@ pub fn emit(
     );
 }
 
-pub fn render(self: *LlvmBackend) Error!void {
-    c.LLVMSetModuleInlineAsm2(self.module, self.air.global_assembly.items.ptr, self.air.global_assembly.items.len);
-
-    var global_scope: Scope = .{};
-    self.scope = &global_scope;
-
-    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(self.air.variables.count() + self.air.functions.count()));
-
-    for (self.air.variables.keys(), self.air.variables.values()) |variable_name, variable| {
-        const variable_name_z = try self.allocator.dupeZ(u8, variable_name);
-        defer self.allocator.free(variable_name_z);
-
-        const variable_type = self.compilation.getTypeFromId(variable.type_id);
-
-        const llvm_type = try self.llvmType(variable_type);
-
-        const llvm_pointer = c.LLVMAddGlobal(self.module, llvm_type, variable_name_z.ptr);
-
-        if (variable.initializer) |initializer| {
-            try self.renderInstruction(initializer);
-
-            var initializer_register = self.stack.pop();
-
-            try self.unaryImplicitCast(&initializer_register, variable.type_id);
-
-            _ = c.LLVMSetInitializer(llvm_pointer, initializer_register.value);
-        }
-
-        self.scope.putAssumeCapacity(variable_name, .{
-            .type_id = variable.type_id,
-            .pointer = llvm_pointer,
-        });
-    }
-
-    for (self.air.functions.keys(), self.air.functions.values()) |function_name, function| {
-        const function_name_z = try self.allocator.dupeZ(u8, function_name);
-        defer self.allocator.free(function_name_z);
-
-        const function_type = self.compilation.getTypeFromId(function.type_id);
-
-        const llvm_type = try self.llvmType(function_type);
-
-        const llvm_pointer = c.LLVMAddFunction(self.module, function_name_z.ptr, llvm_type);
-
-        self.scope.putAssumeCapacity(function_name, .{
-            .type_id = function.type_id,
-            .pointer = llvm_pointer,
-        });
-    }
-
-    for (self.air.functions.keys(), self.air.functions.values()) |function_name, function| {
-        const llvm_pointer = self.scope.get(function_name).?.pointer;
-
-        const function_type = self.compilation.getTypeFromId(function.type_id);
-
-        self.function_value = llvm_pointer;
-        self.function_type = function_type.function;
-
-        if (function.body_block) |body_block| {
-            const llvm_entry_block = c.LLVMAppendBasicBlockInContext(self.context, self.function_value, "");
-
-            c.LLVMPositionBuilderAtEnd(self.builder, llvm_entry_block);
-
-            _ = try self.renderBlock(body_block);
-        }
-    }
-}
-
-fn renderInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!void {
+fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!void {
     switch (air_instruction) {
         .duplicate => try self.stack.append(self.allocator, self.stack.getLast()),
         .reverse => |count| std.mem.reverse(Register, self.stack.items[self.stack.items.len - count ..]),
         .pop => _ = self.stack.pop(),
 
-        .string => |string| try self.renderString(string),
-        .int => |int| try self.renderInt(int),
-        .float => |float| try self.renderFloat(float),
-        .boolean => |boolean| try self.renderBoolean(boolean),
+        .string => |string| try self.emitString(string),
+        .int => |int| try self.emitInt(int),
+        .float => |float| try self.emitFloat(float),
+        .boolean => |boolean| try self.emitBoolean(boolean),
 
-        .negate => try self.renderNegate(),
+        .negate => try self.emitNegate(),
 
-        .bool_not, .bit_not => try self.renderNot(),
+        .bool_not, .bit_not => try self.emitNot(),
 
-        .bit_and => try self.renderBitwiseArithmetic(.bit_and),
-        .bit_or => try self.renderBitwiseArithmetic(.bit_or),
-        .bit_xor => try self.renderBitwiseArithmetic(.bit_xor),
+        .bit_and => try self.emitBitwiseArithmetic(.bit_and),
+        .bit_or => try self.emitBitwiseArithmetic(.bit_or),
+        .bit_xor => try self.emitBitwiseArithmetic(.bit_xor),
 
-        .write => try self.renderWrite(),
-        .read => try self.renderRead(),
+        .write => try self.emitWrite(),
+        .read => try self.emitRead(),
 
-        .add => try self.renderArithmetic(.add),
-        .sub => try self.renderArithmetic(.sub),
-        .mul => try self.renderArithmetic(.mul),
-        .div => try self.renderArithmetic(.div),
-        .rem => try self.renderArithmetic(.rem),
+        .add => try self.emitArithmetic(.add),
+        .sub => try self.emitArithmetic(.sub),
+        .mul => try self.emitArithmetic(.mul),
+        .div => try self.emitArithmetic(.div),
+        .rem => try self.emitArithmetic(.rem),
 
-        .lt => try self.renderComparison(.lt),
-        .gt => try self.renderComparison(.gt),
-        .eql => try self.renderComparison(.eql),
+        .lt => try self.emitComparison(.lt),
+        .gt => try self.emitComparison(.gt),
+        .eql => try self.emitComparison(.eql),
 
-        .shl => try self.renderBitwiseShift(.left),
-        .shr => try self.renderBitwiseShift(.right),
+        .shl => try self.emitBitwiseShift(.left),
+        .shr => try self.emitBitwiseShift(.right),
 
-        .cast => |to_id| try self.renderCast(to_id),
+        .cast => |to_id| try self.emitCast(to_id),
 
-        .inline_assembly => |inline_assembly| try self.renderInlineAssembly(inline_assembly),
+        .inline_assembly => |inline_assembly| try self.emitInlineAssembly(inline_assembly),
 
-        .call => |arguments_count| try self.renderCall(arguments_count),
+        .call => |arguments_count| try self.emitCall(arguments_count),
 
-        .parameters => |names| try self.renderParameters(names),
+        .parameters => |names| try self.emitParameters(names),
 
-        .variable => |variable| try self.renderVariable(variable),
+        .variable => |variable| try self.emitVariable(variable),
 
-        .get_variable_ptr => |name| try self.renderGetVariablePtr(name),
-        .get_element_ptr => try self.renderGetElementPtr(),
-        .get_field_ptr => |field_index| try self.renderGetFieldPtr(field_index),
+        .get_variable_ptr => |name| try self.emitGetVariablePtr(name),
+        .get_element_ptr => try self.emitGetElementPtr(),
+        .get_field_ptr => |field_index| try self.emitGetFieldPtr(field_index),
 
-        .slice => try self.renderSlice(),
+        .slice => try self.emitSlice(),
 
-        .block => |block| try self.renderBlock(block),
-        .loop => |loop| try self.renderLoop(loop),
-        .@"break" => try self.renderBreak(),
-        .@"continue" => try self.renderContinue(),
-        .conditional => |conditional| try self.renderConditional(conditional),
-        .@"switch" => |@"switch"| try self.renderSwitch(@"switch"),
+        .block => |block| try self.emitBlock(block),
+        .loop => |loop| try self.emitLoop(loop),
+        .@"break" => try self.emitBreak(),
+        .@"continue" => try self.emitContinue(),
+        .conditional => |conditional| try self.emitConditional(conditional),
+        .@"switch" => |@"switch"| try self.emitSwitch(@"switch"),
 
-        .ret => try self.renderReturn(true),
-        .ret_void => try self.renderReturn(false),
+        .ret => try self.emitReturn(true),
+        .ret_void => try self.emitReturn(false),
     }
 }
 
-fn renderString(self: *LlvmBackend, range: Range) Error!void {
+fn emitString(self: *LlvmBackend, range: Range) Error!void {
     const string = self.compilation.getStringFromRange(range);
 
     const string_type_id = try self.compilation.putType(try self.compilation.makeStringType(string.len));
@@ -283,7 +281,7 @@ fn renderString(self: *LlvmBackend, range: Range) Error!void {
     }
 }
 
-fn renderInt(self: *LlvmBackend, id: u32) Error!void {
+fn emitInt(self: *LlvmBackend, id: u32) Error!void {
     const int = self.compilation.getIntFromId(id);
 
     const int_type = Type.intFittingRange(int, int);
@@ -296,7 +294,7 @@ fn renderInt(self: *LlvmBackend, id: u32) Error!void {
     try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(int_type), .value = llvm_int_value });
 }
 
-fn renderFloat(self: *LlvmBackend, float: f64) Error!void {
+fn emitFloat(self: *LlvmBackend, float: f64) Error!void {
     const float_type = Type.floatFittingRange(float, float);
 
     const llvm_float_type = try self.llvmType(float_type);
@@ -305,14 +303,14 @@ fn renderFloat(self: *LlvmBackend, float: f64) Error!void {
     try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(float_type), .value = llvm_float_value });
 }
 
-fn renderBoolean(self: *LlvmBackend, boolean: bool) Error!void {
+fn emitBoolean(self: *LlvmBackend, boolean: bool) Error!void {
     try self.stack.append(self.allocator, .{
         .type_id = try self.compilation.putType(.bool),
         .value = c.LLVMConstInt(try self.llvmType(.bool), @intFromBool(boolean), 0),
     });
 }
 
-fn renderNegate(self: *LlvmBackend) Error!void {
+fn emitNegate(self: *LlvmBackend) Error!void {
     const rhs = self.stack.pop();
 
     try self.stack.append(self.allocator, .{
@@ -324,7 +322,7 @@ fn renderNegate(self: *LlvmBackend) Error!void {
     });
 }
 
-fn renderNot(self: *LlvmBackend) Error!void {
+fn emitNot(self: *LlvmBackend) Error!void {
     const rhs = self.stack.pop();
 
     try self.stack.append(self.allocator, .{
@@ -339,7 +337,7 @@ const BitwiseArithmeticOperation = enum {
     bit_xor,
 };
 
-fn renderBitwiseArithmetic(self: *LlvmBackend, comptime operation: BitwiseArithmeticOperation) Error!void {
+fn emitBitwiseArithmetic(self: *LlvmBackend, comptime operation: BitwiseArithmeticOperation) Error!void {
     const rhs = self.stack.pop();
     const lhs = self.stack.pop();
 
@@ -356,7 +354,7 @@ fn renderBitwiseArithmetic(self: *LlvmBackend, comptime operation: BitwiseArithm
     );
 }
 
-fn renderWrite(self: *LlvmBackend) Error!void {
+fn emitWrite(self: *LlvmBackend) Error!void {
     const pointer = self.stack.pop();
 
     const pointer_type = self.compilation.getTypeFromId(pointer.type_id).pointer;
@@ -369,7 +367,7 @@ fn renderWrite(self: *LlvmBackend) Error!void {
     _ = c.LLVMBuildStore(self.builder, register.value, pointer.value);
 }
 
-fn renderRead(self: *LlvmBackend) Error!void {
+fn emitRead(self: *LlvmBackend) Error!void {
     const pointer = self.stack.pop();
 
     const pointer_type = self.compilation.getTypeFromId(pointer.type_id).pointer;
@@ -389,7 +387,7 @@ fn renderRead(self: *LlvmBackend) Error!void {
     });
 }
 
-fn renderGetElementPtr(self: *LlvmBackend) Error!void {
+fn emitGetElementPtr(self: *LlvmBackend) Error!void {
     var index = self.stack.pop();
 
     const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
@@ -434,7 +432,7 @@ fn renderGetElementPtr(self: *LlvmBackend) Error!void {
     );
 }
 
-fn renderGetFieldPtr(self: *LlvmBackend, field_index: u32) Error!void {
+fn emitGetFieldPtr(self: *LlvmBackend, field_index: u32) Error!void {
     const container = self.stack.pop();
     const container_type = self.compilation.getTypeFromId(self.compilation.getTypeFromId(container.type_id).pointer.child_type_id);
     const llvm_container_type = try self.llvmType(container_type);
@@ -498,7 +496,7 @@ fn renderGetFieldPtr(self: *LlvmBackend, field_index: u32) Error!void {
     );
 }
 
-fn renderSlice(self: *LlvmBackend) Error!void {
+fn emitSlice(self: *LlvmBackend) Error!void {
     var end = self.stack.pop();
     var start = self.stack.pop();
 
@@ -556,7 +554,7 @@ const ArithmeticOperation = enum {
     rem,
 };
 
-fn renderArithmetic(self: *LlvmBackend, comptime operation: ArithmeticOperation) Error!void {
+fn emitArithmetic(self: *LlvmBackend, comptime operation: ArithmeticOperation) Error!void {
     var rhs = self.stack.pop();
     var lhs = self.stack.pop();
 
@@ -618,7 +616,7 @@ const ComparisonOperation = enum {
     eql,
 };
 
-fn renderComparison(self: *LlvmBackend, comptime operation: ComparisonOperation) Error!void {
+fn emitComparison(self: *LlvmBackend, comptime operation: ComparisonOperation) Error!void {
     const rhs = self.stack.pop();
     const lhs = self.stack.pop();
 
@@ -658,7 +656,7 @@ const BitwiseShiftDirection = enum {
     right,
 };
 
-fn renderBitwiseShift(self: *LlvmBackend, comptime direction: BitwiseShiftDirection) Error!void {
+fn emitBitwiseShift(self: *LlvmBackend, comptime direction: BitwiseShiftDirection) Error!void {
     var rhs = self.stack.pop();
     const lhs = self.stack.pop();
 
@@ -682,7 +680,7 @@ fn renderBitwiseShift(self: *LlvmBackend, comptime direction: BitwiseShiftDirect
     );
 }
 
-fn renderCast(self: *LlvmBackend, to_id: u32) Error!void {
+fn emitCast(self: *LlvmBackend, to_id: u32) Error!void {
     const lhs = self.stack.pop();
 
     const value = lhs.value;
@@ -754,7 +752,7 @@ fn renderCast(self: *LlvmBackend, to_id: u32) Error!void {
     );
 }
 
-fn renderInlineAssembly(self: *LlvmBackend, assembly: Air.Instruction.InlineAssembly) Error!void {
+fn emitInlineAssembly(self: *LlvmBackend, assembly: Air.Instruction.InlineAssembly) Error!void {
     const assembly_inputs = try self.allocator.alloc(c.LLVMValueRef, assembly.input_constraints.len);
 
     var assembly_constraints: std.ArrayListUnmanaged(u8) = .{};
@@ -820,7 +818,7 @@ fn renderInlineAssembly(self: *LlvmBackend, assembly: Air.Instruction.InlineAsse
     }
 }
 
-fn renderCall(self: *LlvmBackend, arguments_count: usize) Error!void {
+fn emitCall(self: *LlvmBackend, arguments_count: usize) Error!void {
     const function_pointer = self.stack.pop();
 
     const function_type = self.compilation.getTypeFromId(self.compilation.getTypeFromId(function_pointer.type_id).pointer.child_type_id).function;
@@ -852,7 +850,7 @@ fn renderCall(self: *LlvmBackend, arguments_count: usize) Error!void {
     }
 }
 
-fn renderParameters(self: *LlvmBackend, names: [][]const u8) Error!void {
+fn emitParameters(self: *LlvmBackend, names: [][]const u8) Error!void {
     try self.scope.ensureTotalCapacity(self.allocator, @intCast(names.len));
 
     for (names, 0..) |name, i| {
@@ -875,7 +873,7 @@ fn renderParameters(self: *LlvmBackend, names: [][]const u8) Error!void {
     self.allocator.free(names);
 }
 
-fn renderVariable(self: *LlvmBackend, variable: struct { []const u8, u32 }) Error!void {
+fn emitVariable(self: *LlvmBackend, variable: struct { []const u8, u32 }) Error!void {
     const name, const type_id = variable;
 
     const @"type" = self.compilation.getTypeFromId(type_id);
@@ -901,7 +899,7 @@ fn renderVariable(self: *LlvmBackend, variable: struct { []const u8, u32 }) Erro
     });
 }
 
-fn renderGetVariablePtr(self: *LlvmBackend, name: []const u8) Error!void {
+fn emitGetVariablePtr(self: *LlvmBackend, name: []const u8) Error!void {
     const variable = self.scope.get(name).?;
 
     try self.stack.append(
@@ -920,14 +918,14 @@ fn renderGetVariablePtr(self: *LlvmBackend, name: []const u8) Error!void {
     );
 }
 
-fn renderBlock(self: *LlvmBackend, id: u32) Error!void {
+fn emitBlock(self: *LlvmBackend, id: u32) Error!void {
     var scope: Scope = .{ .maybe_parent = self.scope };
     self.scope = &scope;
 
     const instructions = self.air.blocks.items[id].items;
 
     for (instructions) |instruction|
-        try self.renderInstruction(instruction);
+        try self.emitInstruction(instruction);
 
     self.scope = self.scope.maybe_parent.?;
 }
@@ -935,7 +933,7 @@ fn renderBlock(self: *LlvmBackend, id: u32) Error!void {
 var llvm_loop_condition_block: c.LLVMBasicBlockRef = null;
 var llvm_loop_continue_block: c.LLVMBasicBlockRef = null;
 
-fn renderLoop(self: *LlvmBackend, loop: Air.Instruction.Loop) Error!void {
+fn emitLoop(self: *LlvmBackend, loop: Air.Instruction.Loop) Error!void {
     const llvm_header_block = c.LLVMGetInsertBlock(self.builder);
     if (c.LLVMGetBasicBlockTerminator(llvm_header_block) != null) return;
 
@@ -953,7 +951,7 @@ fn renderLoop(self: *LlvmBackend, loop: Air.Instruction.Loop) Error!void {
 
     c.LLVMPositionBuilderAtEnd(self.builder, llvm_loop_condition_block);
 
-    try self.renderBlock(loop.condition_block);
+    try self.emitBlock(loop.condition_block);
 
     const condition_value = self.stack.pop().value;
 
@@ -966,7 +964,7 @@ fn renderLoop(self: *LlvmBackend, loop: Air.Instruction.Loop) Error!void {
 
     c.LLVMPositionBuilderAtEnd(self.builder, llvm_body_block);
 
-    try self.renderBlock(loop.body_block);
+    try self.emitBlock(loop.body_block);
 
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
         _ = c.LLVMBuildBr(self.builder, llvm_loop_condition_block);
@@ -975,19 +973,19 @@ fn renderLoop(self: *LlvmBackend, loop: Air.Instruction.Loop) Error!void {
     c.LLVMPositionBuilderAtEnd(self.builder, llvm_loop_continue_block);
 }
 
-fn renderBreak(self: *LlvmBackend) Error!void {
+fn emitBreak(self: *LlvmBackend) Error!void {
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
         _ = c.LLVMBuildBr(self.builder, llvm_loop_continue_block);
     }
 }
 
-fn renderContinue(self: *LlvmBackend) Error!void {
+fn emitContinue(self: *LlvmBackend) Error!void {
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
         _ = c.LLVMBuildBr(self.builder, llvm_loop_condition_block);
     }
 }
 
-fn renderConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditional) Error!void {
+fn emitConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditional) Error!void {
     const llvm_header_block = c.LLVMGetInsertBlock(self.builder);
     if (c.LLVMGetBasicBlockTerminator(llvm_header_block) != null) return;
 
@@ -1010,7 +1008,7 @@ fn renderConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditiona
 
     self.stack = .{};
 
-    try self.renderBlock(conditional.then_block);
+    try self.emitBlock(conditional.then_block);
 
     const maybe_then_value = self.stack.popOrNull();
 
@@ -1023,7 +1021,7 @@ fn renderConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditiona
     self.stack = .{};
 
     if (conditional.else_block) |else_block|
-        try self.renderBlock(else_block);
+        try self.emitBlock(else_block);
 
     const maybe_else_value = self.stack.popOrNull();
 
@@ -1059,7 +1057,7 @@ fn renderConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditiona
     }
 }
 
-fn renderSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!void {
+fn emitSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!void {
     const llvm_header_block = c.LLVMGetInsertBlock(self.builder);
     if (c.LLVMGetBasicBlockTerminator(llvm_header_block) != null) return;
 
@@ -1091,7 +1089,7 @@ fn renderSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!voi
 
         c.LLVMPositionBuilderAtEnd(self.builder, llvm_else_block);
 
-        try self.renderBlock(@"switch".else_block);
+        try self.emitBlock(@"switch".else_block);
 
         if (self.stack.popOrNull()) |else_value| {
             try llvm_incoming_phi_entries.append(self.allocator, .{
@@ -1122,7 +1120,7 @@ fn renderSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!voi
 
         c.LLVMPositionBuilderAtEnd(self.builder, llvm_case_block);
 
-        try self.renderBlock(case_block);
+        try self.emitBlock(case_block);
 
         if (self.stack.popOrNull()) |case_result_value| {
             try llvm_incoming_phi_entries.append(self.allocator, .{
@@ -1165,7 +1163,7 @@ fn renderSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!voi
     }
 }
 
-fn renderReturn(self: *LlvmBackend, comptime with_value: bool) Error!void {
+fn emitReturn(self: *LlvmBackend, comptime with_value: bool) Error!void {
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) != null) return;
 
     if (with_value) {
