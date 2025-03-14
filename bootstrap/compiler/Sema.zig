@@ -1720,7 +1720,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
         const import_file = self.compilation.env.barq_lib.std_file;
         const import_file_path = self.compilation.env.barq_lib.std_file_path;
 
-        if (self.compilation.pool.modules.get(import_file_path) != null) return .{ .path = import_file_path, .buffer = "" };
+        if (self.compilation.pool.modules.contains(import_file_path)) return .{ .path = import_file_path, .buffer = "" };
 
         const import_file_buffer = import_file.readToEndAllocOptions(
             self.allocator,
@@ -1781,7 +1781,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
 
     const import_file_path = try std.fs.path.resolve(self.allocator, &.{ parent_dir_path, file_path });
 
-    if (self.compilation.pool.modules.get(import_file_path) != null) return .{ .path = import_file_path, .buffer = "" };
+    if (self.compilation.pool.modules.contains(import_file_path)) return .{ .path = import_file_path, .buffer = "" };
 
     const import_file_buffer = import_file.readToEndAllocOptions(
         self.allocator,
@@ -1946,7 +1946,7 @@ fn analyzeParameters(self: *Sema, names: []Name) Error!void {
     try self.scope.ensureUnusedCapacity(self.allocator, @intCast(names.len));
 
     for (names, 0..) |name, i| {
-        if (self.scope.get(name.buffer) != null) try self.reportRedeclaration(name);
+        if (self.scope.contains(name.buffer)) try self.reportRedeclaration(name);
 
         detokenized_names[i] = name.buffer;
 
@@ -1960,7 +1960,7 @@ fn analyzeParameters(self: *Sema, names: []Name) Error!void {
 }
 
 fn analyzeConstant(self: *Sema, name: Name) Error!void {
-    if (self.scope.get(name.buffer) != null) try self.reportRedeclaration(name);
+    if (self.scope.contains(name.buffer)) try self.reportRedeclaration(name);
 
     const value = self.stack.pop();
 
@@ -1978,7 +1978,7 @@ fn analyzeConstant(self: *Sema, name: Name) Error!void {
 }
 
 fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
-    if (self.scope.get(name.buffer) != null) try self.reportRedeclaration(name);
+    if (self.scope.contains(name.buffer)) try self.reportRedeclaration(name);
 
     const type_id = if (infer)
         try self.getTypeIdFromValue(self.stack.getLast())
@@ -2224,7 +2224,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
             },
         };
 
-        if (case_values.get(case_value_int) != null) {
+        if (case_values.contains(case_value_int)) {
             self.error_info = .{ .message = "duplcicte switch case", .source_loc = SourceLoc.find(self.module.file.buffer, case_token_start) };
 
             return error.WithMessage;

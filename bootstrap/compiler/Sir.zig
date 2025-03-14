@@ -374,8 +374,8 @@ pub const Parser = struct {
     fn parseUnit(self: *Parser, comptime top_level: bool) Error!void {
         const name = try self.parseName();
 
-        if (self.sir.constants.get(name.buffer) != null) try self.reportRedeclaration(name);
-        if (self.sir.variables.get(name.buffer) != null) try self.reportRedeclaration(name);
+        if (self.sir.constants.contains(name.buffer)) try self.reportRedeclaration(name);
+        if (self.sir.variables.contains(name.buffer)) try self.reportRedeclaration(name);
 
         const previous_sir_instructions = self.sir_instructions;
         defer self.sir_instructions = previous_sir_instructions;
@@ -1172,7 +1172,7 @@ pub const Parser = struct {
         while (!self.eat(.close_brace)) {
             const field_name = try self.parseName();
 
-            if (fields.get(field_name.buffer) != null) {
+            if (fields.contains(field_name.buffer)) {
                 var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
 
                 try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in struct fields", .{field_name.buffer});
@@ -1229,7 +1229,7 @@ pub const Parser = struct {
         while (!self.eat(.close_brace)) {
             const field_name = try self.parseName();
 
-            if (fields.get(field_name.buffer) != null) {
+            if (fields.contains(field_name.buffer)) {
                 var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
 
                 try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in enum fields", .{field_name.buffer});
