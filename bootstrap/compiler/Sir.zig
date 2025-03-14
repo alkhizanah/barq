@@ -140,6 +140,8 @@ pub const Instruction = union(enum) {
     get_element: u32,
     /// Get a field in a struct
     get_field: Name,
+    /// Check if a container has a specific field
+    has_field: u32,
     /// Make a new slice out of a "size many" pointer
     make_slice: u32,
     /// Nest blocks inside each other
@@ -970,6 +972,30 @@ pub const Parser = struct {
             }
 
             try self.sir_instructions.append(self.allocator, .{ .import = token_start });
+        } else if (std.mem.eql(u8, token_value, "has_field")) {
+            if (!self.eat(.open_paren)) {
+                self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            try self.parseExpr(.lowest);
+
+            if (!self.eat(.comma)) {
+                self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            try self.parseExpr(.lowest);
+
+            if (!self.eat(.close_paren)) {
+                self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            try self.sir_instructions.append(self.allocator, .{ .has_field = token_start });
         } else if (std.mem.eql(u8, token_value, "target_os")) {
             try self.sir_instructions.append(self.allocator, .{ .int = self.target_os_int_id });
         } else if (std.mem.eql(u8, token_value, "target_arch")) {

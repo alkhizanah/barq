@@ -1,97 +1,93 @@
 std :: @import("std");
 
+Client :: struct {
+    fd : s32,
+    address : sockaddr,
+}
+
+client_close :: fn (client : Client) {
+    close(client.fd);
+}
+
 Server :: struct {
     fd : s32,
 }
 
 server_init :: fn (server : *Server) {
-    std.io.print("creating socket.. ");
+    print("creating socket.. ");
 
-    if (server.fd = std.os.linux.socket(std.os.linux.AF_INET, std.os.linux.SOCK_STREAM, 0)) < 0 {
-        std.io.print("failure\n");
-
-        std.process.exit(1);
+    if (server.fd = socket(AF_INET, SOCK_STREAM, 0)) < 0 {
+        eprintln("failure");
+        exit(1);
     } else {    
-        std.io.print("success\n");
+        println("success");
     }
 
     optlevel : u32 = 1;
-    std.os.linux.setsockopt(server.fd, std.os.linux.SOL_SOCKET, std.os.linux.SO_REUSEADDR, &optlevel as usize, 4);
-    std.os.linux.setsockopt(server.fd, std.os.linux.SOL_SOCKET, std.os.linux.SO_REUSEPORT, &optlevel as usize, 4);
+    setsockopt(server.fd, SOL_SOCKET, SO_REUSEADDR, &optlevel as usize, 4);
+    setsockopt(server.fd, SOL_SOCKET, SO_REUSEPORT, &optlevel as usize, 4);
 
-    address : std.os.linux.sockaddr_in;
-    address.family = std.os.linux.AF_INET;
+    address : sockaddr_in;
+    address.family = AF_INET;
     address.port = 0x901f;
     address.addr = 0;
     (&address.zero as *u64).* = 0;
 
-    std.io.print("binding.. ");
+    print("binding.. ");
 
-    if std.os.linux.bind(server.fd, &address as *std.os.linux.sockaddr, 16) != 0 {
-        std.io.print("failure\n");
-
-        std.process.exit(1);
+    if bind(server.fd, &address as *sockaddr, 16) != 0 {
+        eprintln("failure");
+        exit(1);
     } else {
-        std.io.print("success\n");
+        println("success");
     }
 
-    std.io.print("listening.. ");
+    print("listening.. ");
 
-    if std.os.linux.listen(server.fd, 5) != 0 {
-        std.io.print("failure\n");
-
-        std.process.exit(1);
+    if listen(server.fd, 5) != 0 {
+        eprintln("failure");
+        exit(1);
     } else {
-        std.io.print("success\n");
+        println("success");
    }
 }
 
-Client :: struct {
-    fd : s32,
-    address : std.os.linux.sockaddr,
-}
-
 server_accept :: fn (server : Server, client : *Client) {
-    address_len : std.os.linux.socklen_t;
+    address_len : socklen_t;
 
-    std.io.print("accepting request.. ");
+    print("accepting request.. ");
 
-    if (client.fd = std.os.linux.accept(server.fd, &client.address, &address_len)) < 0 {
-        std.io.print("failure\n");
-
-        std.process.exit(1);
+    if (client.fd = accept(server.fd, &client.address, &address_len)) < 0 {
+        eprintln("failure");
+        exit(1);
     } else {    
-        std.io.print("success\n");
+        println("success");
     }
-}
-
-client_close :: fn (client : Client) {
-    std.os.linux.close(client.fd);
 }
 
 http :: fn (client : Client) {
     ch : u8 = 0;
 
-    while std.os.linux.read(client.fd, &ch as usize, 1) == 1 {
+    while read(client.fd, &ch as usize, 1) == 1 {
         if ch == '\n' {
-            std.os.linux.read(client.fd, &ch as usize, 1);
+            read(client.fd, &ch as usize, 1);
 
             if ch == '\r' {
-                std.os.linux.read(client.fd, &ch as usize, 1);
+                read(client.fd, &ch as usize, 1);
 
                 break;
             }
         }
     }
 
-    std.io.printfd(client.fd, "HTTP/1.1 200 OK\r\nConnection : close\r\nContent-Type : text/html\r\n\r\n<h1>Hello, World!</h1>\n");
+    printfd(client.fd, "HTTP/1.1 200 OK\r\nConnection : close\r\nContent-Type : text/html\r\n\r\n<h1>Hello, World!</h1>\n");
 }
 
 echo :: fn (client : Client) {
     ch : u8 = 0;
 
-    while std.os.linux.read(client.fd, &ch as usize, 1) == 1 {
-        std.os.linux.write(client.fd, &ch as usize, 1);
+    while read(client.fd, &ch as usize, 1) == 1 {
+        write(client.fd, &ch as usize, 1);
     }
 }
 
@@ -110,3 +106,26 @@ main :: fn () {
         client_close(client);
     }
 }
+
+exit :: std.process.exit;
+
+printfd :: std.io.printfd;
+print :: std.io.print;
+println :: std.io.println;
+eprintln :: std.io.eprintln;
+
+socket :: std.os.linux.socket;
+bind :: std.os.linux.bind;
+read :: std.os.linux.read;
+close :: std.os.linux.close;
+listen :: std.os.linux.listen;
+accept :: std.os.linux.accept;
+socklen_t :: std.os.linux.socklen_t;
+sockaddr :: std.os.linux.sockaddr;
+sockaddr_in :: std.os.linux.sockaddr_in;
+setsockopt :: std.os.linux.setsockopt;
+AF_INET :: std.os.linux.AF_INET;
+SOCK_STREAM :: std.os.linux.SOCK_STREAM;
+SOL_SOCKET :: std.os.linux.SOL_SOCKET;
+SO_REUSEADDR :: std.os.linux.SO_REUSEADDR;
+SO_REUSEPORT :: std.os.linux.SO_REUSEPORT;

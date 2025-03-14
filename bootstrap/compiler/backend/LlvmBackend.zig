@@ -1006,6 +1006,10 @@ fn renderConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditiona
 
     c.LLVMPositionBuilderAtEnd(self.builder, llvm_then_block);
 
+    const previous_stack = self.stack;
+
+    self.stack = .{};
+
     try self.renderBlock(conditional.then_block);
 
     const maybe_then_value = self.stack.popOrNull();
@@ -1016,10 +1020,14 @@ fn renderConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditiona
 
     c.LLVMPositionBuilderAtEnd(self.builder, llvm_else_block);
 
+    self.stack = .{};
+
     if (conditional.else_block) |else_block|
         try self.renderBlock(else_block);
 
     const maybe_else_value = self.stack.popOrNull();
+
+    self.stack = previous_stack;
 
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
         _ = c.LLVMBuildBr(self.builder, llvm_continue_block);

@@ -84,47 +84,6 @@ const Variable = struct {
     value: Value,
 };
 
-fn Queue(comptime T: type) type {
-    return struct {
-        const Self = @This();
-
-        pub const Node = struct {
-            next: ?*Node = null,
-            value: T,
-        };
-
-        first: ?*Node = null,
-        last: ?*Node = null,
-
-        pub fn enqueue(self: *Self, allocator: std.mem.Allocator, value: T) std.mem.Allocator.Error!void {
-            const node = try allocator.create(Node);
-            node.* = .{ .value = value };
-
-            if (self.last) |last| {
-                last.next = node;
-            } else {
-                self.first = node;
-            }
-
-            self.last = node;
-        }
-
-        pub fn dequeue(self: *Self, allocator: std.mem.Allocator) ?T {
-            const node = self.first orelse return null;
-            defer allocator.destroy(node);
-
-            if (node.next) |next| {
-                self.first = next;
-            } else {
-                self.first = null;
-                self.last = null;
-            }
-
-            return node.value;
-        }
-    };
-}
-
 pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, module_id: u32, air: *Air) Error!Sema {
     const module = &compilation.pool.modules.values()[module_id];
 
@@ -547,6 +506,7 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
         .pre_get_element => |token_start| try self.analyzePreGetElement(token_start),
         .get_element => |token_start| try self.analyzeGetElement(token_start),
         .get_field => |name| try self.analyzeGetField(name),
+        .has_field => |token_start| try self.analyzeHasField(token_start),
         .make_slice => |token_start| try self.analyzeMakeSlice(token_start),
 
         .block => |block| try self.analyzeBlock(block),
@@ -1063,44 +1023,47 @@ fn analyzeSet(self: *Sema, name: Name) Error!void {
 }
 
 fn analyzeGetField(self: *Sema, name: Name) Error!void {
-    const rhs_type = try self.getTypeFromValue(self.stack.getLast());
+    const container_type = try self.getTypeFromValue(self.stack.getLast());
 
-    if (rhs_type == .@"struct" or (rhs_type == .pointer and rhs_type.pointer.size == .slice))
+    if (container_type == .@"struct" or (container_type == .pointer and container_type.pointer.size == .slice))
         try self.analyzeReference(name.token_start);
 
-    const rhs = self.stack.pop();
+    const container = self.stack.pop();
 
-    if (rhs == .module_id) {
-        if (self.compilation.getModulePtrFromId(rhs.module_id).scope.get(name.buffer)) |module_variable| {
+    if (container == .module_id) {
+        if (self.compilation.getModulePtrFromId(container.module_id).scope.get(name.buffer)) |module_variable| {
             var mutable_module_variable = module_variable;
             try self.analyzeGet(&mutable_module_variable, name);
-            self.compilation.getModulePtrFromId(rhs.module_id).scope.getPtr(name.buffer).?.* = mutable_module_variable;
+            self.compilation.getModulePtrFromId(container.module_id).scope.getPtr(name.buffer).?.* = mutable_module_variable;
             return;
         }
-    } else if (rhs == .type_id and self.compilation.getTypeFromId(rhs.type_id) == .@"enum") {
-        const rhs_enum_type = self.compilation.getTypeFromId(rhs.type_id).@"enum";
+    } else if (container == .type_id and self.compilation.getTypeFromId(container.type_id) == .@"enum") {
+        const container_enum_type = self.compilation.getTypeFromId(container.type_id).@"enum";
 
-        for (rhs_enum_type.fields) |enum_field| {
+        for (container_enum_type.fields) |enum_field| {
             if (std.mem.eql(u8, enum_field.name, name.buffer)) {
                 try self.air_instructions.append(self.allocator, .{ .int = enum_field.int_id });
 
                 return self.stack.append(self.allocator, .{ .int = enum_field.int_id });
             }
         }
-    } else if (rhs_type == .array or
-        (rhs_type == .pointer and self.compilation.getTypeFromId(rhs_type.pointer.child_type_id) == .array))
+    } else if (container_type == .array or
+        (container_type == .pointer and self.compilation.getTypeFromId(container_type.pointer.child_type_id) == .array))
     {
         if (std.mem.eql(u8, name.buffer, "len")) {
-            const rhs_array = if (rhs_type.getPointer()) |pointer| self.compilation.getTypeFromId(pointer.child_type_id).array else rhs_type.array;
+            const container_array = if (container_type.getPointer()) |pointer|
+                self.compilation.getTypeFromId(pointer.child_type_id).array
+            else
+                container_type.array;
 
             try self.air_instructions.append(self.allocator, .pop);
-            try self.air_instructions.append(self.allocator, .{ .int = rhs_array.len_int_id });
+            try self.air_instructions.append(self.allocator, .{ .int = container_array.len_int_id });
 
-            return self.stack.append(self.allocator, .{ .int = rhs_array.len_int_id });
+            return self.stack.append(self.allocator, .{ .int = container_array.len_int_id });
         }
-    } else if (rhs_type == .pointer and (rhs_type.pointer.size == .slice or
-        (self.compilation.getTypeFromId(rhs_type.pointer.child_type_id) == .pointer and
-        self.compilation.getTypeFromId(rhs_type.pointer.child_type_id).pointer.size == .slice)))
+    } else if (container_type == .pointer and (container_type.pointer.size == .slice or
+        (self.compilation.getTypeFromId(container_type.pointer.child_type_id) == .pointer and
+        self.compilation.getTypeFromId(container_type.pointer.child_type_id).pointer.size == .slice)))
     {
         if (std.mem.eql(u8, name.buffer, "len")) {
             try self.air_instructions.append(self.allocator, .{ .get_field_ptr = 0 });
@@ -1117,41 +1080,44 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
                 .runtime = try self.compilation.putType(.{
                     .pointer = .{
                         .size = .many,
-                        .is_const = rhs_type.pointer.is_const,
-                        .child_type_id = rhs_type.pointer.child_type_id,
+                        .is_const = container_type.pointer.is_const,
+                        .child_type_id = container_type.pointer.child_type_id,
                     },
                 }),
             });
         }
-    } else if (rhs_type == .@"struct" or
-        (rhs_type == .pointer and self.compilation.getTypeFromId(rhs_type.pointer.child_type_id) == .@"struct"))
+    } else if (container_type == .@"struct" or
+        (container_type == .pointer and self.compilation.getTypeFromId(container_type.pointer.child_type_id) == .@"struct"))
     {
-        const rhs_struct = if (rhs_type.getPointer()) |pointer| self.compilation.getTypeFromId(pointer.child_type_id).@"struct" else rhs_type.@"struct";
+        const container_struct = if (container_type.getPointer()) |pointer|
+            self.compilation.getTypeFromId(pointer.child_type_id).@"struct"
+        else
+            container_type.@"struct";
 
-        for (rhs_struct.fields, 0..) |field, i| {
-            if (std.mem.eql(u8, field.name, name.buffer)) {
+        for (container_struct.fields, 0..) |struct_field, i| {
+            if (std.mem.eql(u8, struct_field.name, name.buffer)) {
                 try self.air_instructions.append(self.allocator, .{ .get_field_ptr = @intCast(i) });
                 try self.air_instructions.append(self.allocator, .read);
 
-                return self.stack.append(self.allocator, .{ .runtime = field.type_id });
+                return self.stack.append(self.allocator, .{ .runtime = struct_field.type_id });
             }
         }
     }
 
-    if (rhs == .type_id) {
+    if (container == .type_id) {
         var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
 
         try error_message_buf.writer(self.allocator).print("'{s}' is not a field in type '", .{name.buffer});
-        try self.compilation.getTypeFromId(rhs.type_id).format(self.compilation.*, error_message_buf.writer(self.allocator));
+        try self.compilation.getTypeFromId(container.type_id).format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 
         self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
-    } else if (rhs == .module_id) {
+    } else if (container == .module_id) {
         var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
 
         try error_message_buf.writer(self.allocator).print("'{s}' is not a field in module '{s}'", .{
             name.buffer,
-            self.compilation.getModulePtrFromId(rhs.module_id).file.path,
+            self.compilation.getModulePtrFromId(container.module_id).file.path,
         });
 
         self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
@@ -1159,13 +1125,47 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
         var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
 
         try error_message_buf.writer(self.allocator).print("'{s}' is not a field in value of type '", .{name.buffer});
-        try rhs_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
+        try container_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 
         self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
     }
 
     return error.WithMessage;
+}
+
+fn analyzeHasField(self: *Sema, token_start: u32) Error!void {
+    const field_name = switch (self.stack.pop()) {
+        .string => |range| self.compilation.getStringFromRange(range),
+
+        else => {
+            self.error_info = .{
+                .message = "expected field name to be a compile time known string",
+                .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+            };
+
+            return error.WithMessage;
+        },
+    };
+
+    const container = self.stack.pop();
+
+    const container_has_field = switch (container) {
+        .module_id => |id| self.compilation.getModulePtrFromId(id).scope.contains(field_name),
+        .type_id => |id| self.compilation.getTypeFromId(id).hasField(self.compilation.*, field_name),
+
+        else => {
+            self.error_info = .{
+                .message = "expected container to be a module or a type",
+                .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+            };
+
+            return error.WithMessage;
+        },
+    };
+
+    try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .{ .boolean = container_has_field } });
+    try self.stack.append(self.allocator, .{ .boolean = container_has_field });
 }
 
 fn analyzePreGetElement(self: *Sema, token_start: u32) Error!void {

@@ -167,6 +167,40 @@ pub const Type = union(enum) {
         };
     }
 
+    pub fn hasField(self: Type, compilation: Compilation, field_name: []const u8) bool {
+        return switch (self) {
+            .array => std.mem.eql(u8, field_name, "len"),
+
+            .pointer => |container_pointer_type| switch (container_pointer_type.size) {
+                .slice => std.mem.eql(u8, field_name, "len") or std.mem.eql(u8, field_name, "ptr"),
+                .many => false,
+                .one => compilation.getTypeFromId(container_pointer_type.child_type_id).hasField(compilation, field_name),
+            },
+
+            .@"enum" => |container_enum_type| blk: {
+                for (container_enum_type.fields) |enum_field| {
+                    if (std.mem.eql(u8, enum_field.name, field_name)) {
+                        break :blk true;
+                    }
+                }
+
+                break :blk false;
+            },
+
+            .@"struct" => |container_struct_type| blk: {
+                for (container_struct_type.fields) |struct_field| {
+                    if (std.mem.eql(u8, struct_field.name, field_name)) {
+                        break :blk true;
+                    }
+                }
+
+                break :blk false;
+            },
+
+            else => false,
+        };
+    }
+
     pub fn getPointer(self: Type) ?Type.Pointer {
         if (self != .pointer) return null;
         return self.pointer;
@@ -366,6 +400,10 @@ pub fn Scope(comptime V: type) type {
 
         pub fn iterator(self: *const Self) @FieldType(Self, "items").Iterator {
             return self.items.iterator();
+        }
+
+        pub fn contains(self: Self, name: []const u8) bool {
+            return self.items.contains(name);
         }
 
         pub fn put(self: *Self, allocator: std.mem.Allocator, name: []const u8, value: V) std.mem.Allocator.Error!void {
