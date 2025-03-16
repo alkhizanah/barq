@@ -1,0 +1,118 @@
+std :: @import("../std.bq");
+Os :: std.target.Os;
+
+Handle :: switch @target_os {
+    Os.linux => s32,
+
+    else => struct {},
+}
+
+write :: fn (handle : Handle, bytes : []const u8) usize {
+    return switch @target_os {
+        Os.linux => std.os.linux.write(handle, bytes.ptr as usize, bytes.len),
+
+        else => 0,
+    };
+}
+
+read :: fn (handle : Handle, bytes : []u8) usize {
+    return switch @target_os {
+        Os.linux => std.os.linux.read(handle, bytes.ptr as usize, bytes.len),
+
+        else => 0,
+    };
+}
+
+max_path_bytes :: switch @target_os {
+    Os.linux => 4096,
+
+    else => 0,
+}
+
+max_name_bytes :: switch @target_os {
+    Os.linux => 255,
+
+    else => 0,
+}
+
+OpenMode :: enum {
+    read_only  = 0,
+    write_only = 1,
+    read_write = 2,
+}
+
+OpenFlags :: struct {
+    mode : OpenMode,
+}
+
+open :: fn (path : []const u8, flags : OpenFlags) Handle {
+    switch @target_os {
+        Os.linux => {
+            posix_path : [max_path_bytes]u8;
+
+            i : usize = 0;
+
+            while i < path.len {
+                posix_path[i] = path[i];
+
+                i += 1;
+            }
+
+            posix_path[path.len] = 0;
+
+            return std.os.linux.open(&posix_path, flags.mode, 0);
+        },
+
+        else => {},
+    }
+
+    return 0;
+}
+
+open_at :: fn (dir_handle : Handle, path : []const u8, flags : OpenFlags) Handle {
+    switch @target_os {
+        Os.linux => {
+            posix_path : [max_path_bytes]u8;
+
+            i : usize = 0;
+
+            while i < path.len {
+                posix_path[i] = path[i];
+
+                i += 1;
+            }
+
+            posix_path[path.len] = 0;
+
+            return std.os.linux.openat(dir_handle, &posix_path, flags.mode, 0);
+        },
+
+        else => {},
+    }
+
+    return 0;
+}
+
+posix_open :: fn (path : [*]const u8, flags : OpenFlags) Handle {
+    return switch @target_os {
+        Os.linux => std.os.linux.open(path, flags.mode, 0),
+
+        else => 0,
+    };
+}
+
+posix_open_at :: fn (dir_handle : Handle, path : [*]const u8, flags : OpenFlags) Handle {
+    return switch @target_os {
+        Os.linux => std.os.linux.openat(dir_handle, path, flags.mode, 0),
+
+        else => 0,
+    };
+}
+
+close :: fn (handle : Handle) {
+    switch @target_os {
+        Os.linux => std.os.linux.close(handle),
+
+        else => 0,
+    }
+}

@@ -1,12 +1,32 @@
-linux :: @import("os/linux.bq");
+std :: @import("../std.bq");
+Os :: std.target.Os;
 
-// TODO: This is a temporary solution until we have a proper files implementation which must work on all platforms
-printfd :: fn (fd : s32, str : []const u8) {
-    linux.write(fd, str.ptr as usize, str.len);
+get_stdin_handle :: fn () std.fs.Handle {
+    return switch @target_os {
+        Os.linux => std.os.linux.STDIN,
+
+        else => 0,
+    };
+}
+
+get_stdout_handle :: fn () std.fs.Handle {
+    return switch @target_os {
+        Os.linux => std.os.linux.STDOUT,
+
+        else => 0,
+    };
+}
+
+get_stderr_handle :: fn () std.fs.Handle {
+    return switch @target_os {
+        Os.linux => std.os.linux.STDERR,
+
+        else => 0,
+    };
 }
 
 print :: fn (str : []const u8) {
-    printfd(linux.STDOUT, str);
+    std.fs.write(get_stdout_handle(), str);
 }
 
 println :: fn (str : []const u8) {
@@ -15,7 +35,7 @@ println :: fn (str : []const u8) {
 }
 
 eprint :: fn (str : []const u8) {
-    printfd(linux.STDERR, str);
+    std.fs.write(get_stderr_handle(), str);
 }
 
 eprintln :: fn (str : []const u8) {

@@ -16,13 +16,15 @@ syscall4 :: arch_bits.syscall4;
 syscall5 :: arch_bits.syscall5; 
 syscall6 :: arch_bits.syscall6; 
 
+mode_t :: arch_bits.mode_t;
+
 Stat :: arch_bits.Stat;
 
 read :: fn (fd : s32, bufferptr : usize, count : usize) usize {
     return syscall3(SYS.read, (&fd as *u32).*, bufferptr, count);
 }
 
-STDIN :: 0;
+STDIN  :: 0;
 STDOUT :: 1;
 STDERR :: 2;
 
@@ -30,8 +32,20 @@ write :: fn (fd : s32, bufferptr : usize, count : usize) usize {
     return syscall3(SYS.write, (&fd as *u32).*, bufferptr, count);
 }
 
-open :: fn (path : [*]const u8, flags : u32) s32 {
-    return (&(syscall2(SYS.open, path as usize, flags) as u32) as *s32).*;
+open :: fn (path : [*]const u8, flags : u32, mode : mode_t) s32 {
+    if @has_field(SYS, "open") {
+        return (&(syscall3(SYS.open, path as usize, flags, mode) as u32) as *s32).*;
+    } else {
+        return openat(AT_FDCWD, path, flags, mode);
+    }
+
+    return 0;
+}
+
+AT_FDCWD :: -100;
+
+openat :: fn (dirfd : s32, path : [*]const u8, flags : u32, mode : mode_t) s32 {
+    return (&(syscall4(SYS.openat, (&dirfd as *u32).*, path as usize, flags, mode) as u32) as *s32).*;
 }
 
 close :: fn (fd : s32) s32 {
@@ -170,7 +184,6 @@ mmap :: fn (addr : usize, length : usize, prot : u32, flags : u32, fd : s32, off
         return syscall6(SYS.mmap, addr, length, prot, flags, (&fd as *u32).*, (&offset as *u64).*);
     }
 
-    // TODO: Compiler should not error out if we remove this
     return 0;
 }
 

@@ -464,6 +464,7 @@ syscall6 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usi
 off_t :: s64;
 ino_t :: u64;
 dev_t :: u64;
+mode_t :: usize;
 
 timespec :: linux.timespec;
 uid_t :: linux.uid_t;
