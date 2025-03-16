@@ -1,0 +1,67 @@
+std :: @import("std");
+
+print_entire_file :: fn (handle : Handle) {
+    chunk : [1024]u8;
+
+    while true {
+        n := read(handle, &chunk);
+
+        if n <= 0 {
+            break;
+        } else {
+            print(chunk[0..n]);
+        }
+    }
+
+    close(handle);
+}
+
+main :: fn () {
+    args := std.process.args;
+
+    if args.len < 2 {
+        stdin := get_stdin_handle();
+
+        while true {
+            print_entire_file(stdin);
+        }
+    } else {
+        i : usize = 1;
+
+        while i < args.len {
+            flags : OpenFlags;
+            flags.mode = OpenMode.read_only;
+
+            path := args[i];
+            handle := posix_open(path, flags);
+
+            if handle < 0 {
+                eprint("error: could not open file: ");
+
+                len : usize = 0;
+
+                while path[len] != 0 {
+                    len += 1;
+                }
+
+                eprintln(path[0..len]);
+            } else {
+                print_entire_file(handle);
+            }
+
+            i += 1;
+        }
+    }    
+}
+
+OpenFlags :: std.fs.OpenFlags;
+OpenMode :: std.fs.OpenMode;
+Handle :: std.fs.Handle;
+posix_open :: std.fs.posix_open;
+close :: std.fs.close;
+read :: std.fs.read;
+print :: std.io.print;
+eprint :: std.io.eprint;
+eprintln :: std.io.eprintln;
+get_stdin_handle :: std.io.get_stdin_handle;
+exit :: std.process.exit;
