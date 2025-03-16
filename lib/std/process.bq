@@ -1,5 +1,13 @@
-os :: @import("os.bq");
+std :: @import("../std.bq");
+Os :: std.target.Os;
+
+/// Initialized by startup code
+args : [][*]u8;
 
 exit :: fn (status : u8) {
-    os.linux.exit_group(status);
+    switch @target_os {
+        Os.linux => std.os.linux.exit_group(status),
+
+        else => {},
+    }
 }

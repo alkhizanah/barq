@@ -1,8 +1,44 @@
+std :: @import("../../std.bq");
+Arch :: std.target.Arch;
+
 root :: @import("root");
 
-process :: @import("../process.bq");
+posix_start :: fn () @foreign("_start") @callconv(naked) {
+    switch @target_arch {
+        Arch.x86_64 => asm {
+            ".cfi_undefined %rip"
+            "xorl %ebp, %ebp"
+            "movq %rsp, %rdi"
+            "andq $$-16, %rsp"
+            "mov $0, %rcx"
+            "callq *%rcx"
+            :
+            : "X" (&posix_call_main_and_exit)
+        },
 
-_start :: fn () @foreign("_start") {
+        Arch.x86  => asm {
+           "xorl %ebp, %ebp"
+           "movl %esp, %eax"
+           "andl $$-16, %esp"
+           "subl $$12, %esp"
+           "pushl %eax"
+           "mov $0, %ecx"
+           "calll *%ecx"
+           :
+           : "X" (&posix_call_main_and_exit)
+        },
+
+        else => {},
+    }
+}
+
+posix_call_main_and_exit :: fn (argc_argv : [*]usize) @callconv(c) {
+    argc := argc_argv[0];
+    argv := (&argc_argv[1]) as [*][*]u8;
+
+    std.process.args = argv[0..argc];
+
     root.main();
-    process.exit(0);
+
+    std.process.exit(0);
 }
