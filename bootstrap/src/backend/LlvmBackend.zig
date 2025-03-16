@@ -129,8 +129,8 @@ pub fn emit(
             .c => c.LLVMSetFunctionCallConv(llvm_pointer, c.LLVMCCallConv),
             .naked => c.LLVMAddAttributeAtIndex(
                 llvm_pointer,
-                0,
-                c.LLVMCreateEnumAttribute(self.context, c.LLVMGetEnumAttributeKindForName("naked", 5), 1),
+                @bitCast(c.LLVMAttributeFunctionIndex),
+                c.LLVMCreateEnumAttribute(self.context, c.LLVMGetEnumAttributeKindForName("naked", 5)),
             ),
         }
 
