@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const Compilation = @import("compiler/Compilation.zig");
-const Air = @import("compiler/Air.zig");
-const Sema = @import("compiler/Sema.zig");
-const Sir = @import("compiler/Sir.zig");
+const Compilation = @import("Compilation.zig");
+const Air = @import("Air.zig");
+const Sema = @import("Sema.zig");
+const Sir = @import("Sir.zig");
 
 pub const OutputKind = enum {
     assembly,

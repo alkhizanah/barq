@@ -104,6 +104,8 @@ pub fn emit(
             try self.unaryImplicitCast(&initializer_register, variable.type_id);
 
             _ = c.LLVMSetInitializer(llvm_pointer, initializer_register.value);
+        } else {
+            _ = c.LLVMSetInitializer(llvm_pointer, c.LLVMGetUndef(llvm_type));
         }
 
         self.scope.putAssumeCapacity(variable_name, .{
@@ -121,6 +123,16 @@ pub fn emit(
         const llvm_type = try self.llvmType(function_type);
 
         const llvm_pointer = c.LLVMAddFunction(self.module, function_name_z.ptr, llvm_type);
+
+        switch (function_type.function.calling_convention) {
+            .auto => c.LLVMSetFunctionCallConv(llvm_pointer, c.LLVMFastCallConv),
+            .c => c.LLVMSetFunctionCallConv(llvm_pointer, c.LLVMCCallConv),
+            .naked => c.LLVMAddAttributeAtIndex(
+                llvm_pointer,
+                0,
+                c.LLVMCreateStringAttribute(self.context, "naked", 5, "", 0),
+            ),
+        }
 
         self.scope.putAssumeCapacity(function_name, .{
             .type_id = function.type_id,

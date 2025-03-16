@@ -20,7 +20,6 @@ allocator: std.mem.Allocator,
 
 compilation: *Compilation,
 
-module: *Compilation.Pool.Module,
 module_id: u32,
 
 sir: Sir,
@@ -90,7 +89,6 @@ pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, module_id: 
     var sema: Sema = .{
         .allocator = allocator,
         .compilation = compilation,
-        .module = module,
         .module_id = module_id,
         .sir = module.sir,
         .air = air,
@@ -306,7 +304,7 @@ fn popType(self: *Sema, token_start: u32) Error!u32 {
     if (value == .module_id) {
         self.error_info = .{
             .message = "modules are special values which should not be used as types",
-            .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
         };
 
         return error.WithMessage;
@@ -319,7 +317,7 @@ fn popType(self: *Sema, token_start: u32) Error!u32 {
         try value_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (self.compilation.getTypeFromId(value.type_id) == .@"enum") {
@@ -349,7 +347,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
             if (value == .runtime) {
                 self.error_info = .{
                     .message = "expected the constant value to be compile time known",
-                    .source_loc = SourceLoc.find(self.module.file.buffer, lazy_unit.token_start),
+                    .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
                 };
 
                 return error.WithMessage;
@@ -372,7 +370,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
                     .module_id, .type_id, .function => {
                         self.error_info = .{
                             .message = "expected the global initializer to not be a value only available at compile time",
-                            .source_loc = SourceLoc.find(self.module.file.buffer, lazy_unit.token_start),
+                            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
                         };
 
                         return error.WithMessage;
@@ -380,7 +378,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
                     .runtime => {
                         self.error_info = .{
                             .message = "expected the global initializer to be known at compile time",
-                            .source_loc = SourceLoc.find(self.module.file.buffer, lazy_unit.token_start),
+                            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
                         };
 
                         return error.WithMessage;
@@ -406,7 +404,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
             if (@"type" == .void) {
                 self.error_info = .{
                     .message = "cannot declare a variable with type 'void'",
-                    .source_loc = SourceLoc.find(self.module.file.buffer, lazy_unit.token_start),
+                    .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
                 };
 
                 return error.WithMessage;
@@ -427,7 +425,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
                 error.OutOfMemory => std.debug.print("Error: {s}\n", .{root.Cli.errorDescription(err)}),
 
                 error.WithMessage => std.debug.print("{s}:{}:{}: {s}\n", .{
-                    sema.module.file.path,
+                    self.compilation.getModulePtrFromId(lazy_unit.owner_id).file.path,
                     sema.error_info.?.source_loc.line,
                     sema.error_info.?.source_loc.column,
                     sema.error_info.?.message,
@@ -621,7 +619,7 @@ fn analyzeArrayType(self: *Sema, token_start: u32) Error!void {
     if (array_length_value == .runtime) {
         self.error_info = .{
             .message = "array length must be known at compile time",
-            .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
         };
     }
 
@@ -738,6 +736,7 @@ fn analyzeFunctionType(self: *Sema, function_type: Sir.Instruction.FunctionType)
                 .parameter_type_ids = parameter_type_ids,
                 .is_var_args = function_type.is_var_args,
                 .return_type_id = return_type_id,
+                .calling_convention = function_type.calling_convention,
             },
         }),
     });
@@ -755,7 +754,7 @@ fn analyzeNegate(self: *Sema, token_start: u32) Error!void {
         try rhs_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.appendSlice(self.allocator, "' cannot be negated");
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -931,14 +930,14 @@ fn analyzeWrite(self: *Sema, token_start: u32) Error!void {
     if (self.compilation.getTypeFromId(lhs_pointer.child_type_id) == .function) {
         self.error_info = .{
             .message = "cannot write to function pointers, as they are pointing to the start of instructions in memory, which are not values",
-            .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
         };
 
         return error.WithMessage;
     }
 
     if (lhs_pointer.is_const) {
-        self.error_info = .{ .message = "cannot mutate data pointed by this pointer, as it points to read-only data", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot mutate data pointed by this pointer, as it points to read-only data", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -957,7 +956,7 @@ fn analyzeRead(self: *Sema, token_start: u32) Error!void {
     if (self.compilation.getTypeFromId(rhs_pointer.child_type_id) == .function) {
         self.error_info = .{
             .message = "cannot read from function pointers, as they are pointing to the start of instructions in memory, which are not values",
-            .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
         };
 
         return error.WithMessage;
@@ -994,7 +993,7 @@ fn analyzeSet(self: *Sema, name: Name) Error!void {
     const variable = self.scope.getPtr(name.buffer) orelse try self.reportNotDeclared(name);
 
     if (variable.is_const) {
-        self.error_info = .{ .message = "cannot mutate the value of a constant", .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+        self.error_info = .{ .message = "cannot mutate the value of a constant", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
 
         return error.WithMessage;
     }
@@ -1010,7 +1009,7 @@ fn analyzeSet(self: *Sema, name: Name) Error!void {
     if (value == .function) {
         self.error_info = .{
             .message = "functions are only available at compile time, perhaps you meant to store a function pointer? then use `&x`",
-            .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start),
+            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start),
         };
 
         return error.WithMessage;
@@ -1111,7 +1110,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
         try self.compilation.getTypeFromId(container.type_id).format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
     } else if (container == .module_id) {
         var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
 
@@ -1120,7 +1119,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
             self.compilation.getModulePtrFromId(container.module_id).file.path,
         });
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
     } else {
         var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
 
@@ -1128,7 +1127,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
         try container_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
     }
 
     return error.WithMessage;
@@ -1141,7 +1140,7 @@ fn analyzeHasField(self: *Sema, token_start: u32) Error!void {
         else => {
             self.error_info = .{
                 .message = "expected field name to be a compile time known string",
-                .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
             };
 
             return error.WithMessage;
@@ -1157,7 +1156,7 @@ fn analyzeHasField(self: *Sema, token_start: u32) Error!void {
         else => {
             self.error_info = .{
                 .message = "expected container to be a module or a type",
-                .source_loc = SourceLoc.find(self.module.file.buffer, token_start),
+                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
             };
 
             return error.WithMessage;
@@ -1261,13 +1260,13 @@ fn analyzeReference(self: *Sema, token_start: u32) Error!void {
 
     switch (rhs_type) {
         .void => {
-            self.error_info = .{ .message = "cannot reference value with type 'void'", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+            self.error_info = .{ .message = "cannot reference value with type 'void'", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
             return error.WithMessage;
         },
 
         .type => {
-            self.error_info = .{ .message = "cannot reference a type", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+            self.error_info = .{ .message = "cannot reference a type", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
             return error.WithMessage;
         },
@@ -1414,7 +1413,7 @@ fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token
                 const rhs_int = self.compilation.getIntFromId(rhs_int_id);
 
                 if (rhs_int == 0 and (operation == .div or operation == .rem)) {
-                    self.error_info = .{ .message = "division by zero", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+                    self.error_info = .{ .message = "division by zero", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
                     return error.WithMessage;
                 }
@@ -1440,7 +1439,7 @@ fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token
         .float => |lhs_float| switch (rhs) {
             .float => |rhs_float| {
                 if (rhs_float == 0 and (operation == .div or operation == .rem)) {
-                    self.error_info = .{ .message = "division by zero", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+                    self.error_info = .{ .message = "division by zero", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
                     return error.WithMessage;
                 }
@@ -1653,23 +1652,23 @@ fn analyzeCast(self: *Sema, token_start: u32) Error!void {
     const rhs = self.stack.pop();
 
     if (to_type == .void) {
-        self.error_info = .{ .message = "cannot cast to 'void' as it is not possible to represent a value of this type", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot cast to 'void' as it is not possible to represent a value of this type", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (to_type == .function) {
-        self.error_info = .{ .message = "cannot cast to a function type as it should be always wrapped in a pointer", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot cast to a function type as it should be always wrapped in a pointer", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (from_type == .type) {
-        self.error_info = .{ .message = "cannot cast a type", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot cast a type", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (to_type == .@"struct" or from_type == .@"struct") {
-        self.error_info = .{ .message = "cannot cast from or to a struct", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot cast from or to a struct", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (to_type == .array or from_type == .array) {
-        self.error_info = .{ .message = "cannot cast from or to an array", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot cast from or to an array", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (to_type == .pointer and from_type != .pointer) {
@@ -1677,7 +1676,7 @@ fn analyzeCast(self: *Sema, token_start: u32) Error!void {
 
         try self.checkUnaryImplicitCast(rhs, usize_type, token_start);
     } else if (to_type == .pointer and to_type.pointer.size == .slice) {
-        self.error_info = .{ .message = "cannot cast explicitly to a slice, use slicing syntax or implicit casting", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot cast explicitly to a slice, use slicing syntax or implicit casting", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (from_type == .pointer and to_type != .pointer) {
@@ -1694,12 +1693,12 @@ fn analyzeCast(self: *Sema, token_start: u32) Error!void {
             try usize_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
             try error_message_buf.appendSlice(self.allocator, "' in cross compilable manner as the size is different in other targets)");
 
-            self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+            self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
             return error.WithMessage;
         }
     } else if (to_type == .bool) {
-        self.error_info = .{ .message = "cannot cast to a boolean, use comparison instead", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "cannot cast to a boolean, use comparison instead", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     } else if (from_type == .bool) {
@@ -1736,7 +1735,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
                 .{root.Cli.errorDescription(err)},
             );
 
-            self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+            self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
             return error.WithMessage;
         };
@@ -1744,7 +1743,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
         return .{ .path = import_file_path, .buffer = import_file_buffer };
     }
 
-    const parent_dir_path = std.fs.path.dirname(self.module.file.path) orelse if (self.module.file.path[0] == std.fs.path.sep)
+    const parent_dir_path = std.fs.path.dirname(self.compilation.getModulePtrFromId(self.module_id).file.path) orelse if (self.compilation.getModulePtrFromId(self.module_id).file.path[0] == std.fs.path.sep)
         std.fs.path.sep_str
     else
         ".";
@@ -1757,7 +1756,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
             .{root.Cli.errorDescription(err)},
         );
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     };
@@ -1772,7 +1771,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
             .{root.Cli.errorDescription(err)},
         );
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     };
@@ -1797,7 +1796,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
             .{root.Cli.errorDescription(err)},
         );
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     };
@@ -1807,7 +1806,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
 
 fn analyzeImport(self: *Sema, token_start: u32) Error!void {
     if (self.air_instructions.pop() != .string) {
-        self.error_info = .{ .message = "expected a compile time known string for import file path", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "expected a compile time known string for import file path", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -1847,9 +1846,6 @@ fn analyzeImport(self: *Sema, token_start: u32) Error!void {
             .sir = sir_parser.sir,
             .scope = module_scope_on_heap,
         });
-
-        // `putModule` may invalidate our module pointer
-        self.module = self.compilation.getModulePtrFromId(self.module_id);
 
         var sema = try Sema.init(self.allocator, self.compilation, module_id, self.air);
         try sema.hoist();
@@ -1907,7 +1903,7 @@ fn analyzeCall(self: *Sema, call: Sir.Instruction.Call) Error!void {
                 call.arguments_count,
             });
 
-            self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, call.token_start) };
+            self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, call.token_start) };
 
             return error.WithMessage;
         }
@@ -1934,7 +1930,7 @@ fn analyzeCall(self: *Sema, call: Sir.Instruction.Call) Error!void {
         try callable_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.appendSlice(self.allocator, "' does not support calling");
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, call.token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, call.token_start) };
 
         return error.WithMessage;
     }
@@ -1965,7 +1961,7 @@ fn analyzeConstant(self: *Sema, name: Name) Error!void {
     const value = self.stack.pop();
 
     if (value == .runtime) {
-        self.error_info = .{ .message = "expected the constant value to be compile time known", .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+        self.error_info = .{ .message = "expected the constant value to be compile time known", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
 
         return error.WithMessage;
     }
@@ -1991,7 +1987,7 @@ fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
         .void => {
             self.error_info = .{
                 .message = "cannot declare a variable with type 'void'",
-                .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start),
+                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start),
             };
 
             return error.WithMessage;
@@ -2000,7 +1996,7 @@ fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
         .type => {
             self.error_info = .{
                 .message = "cannot declare a variable with a type being the value",
-                .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start),
+                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start),
             };
 
             return error.WithMessage;
@@ -2014,7 +2010,7 @@ fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
         .value = .{ .runtime = type_id },
     });
 
-    if (self.air_instructions.getLast() == .reverse) {
+    if (self.air_instructions.items.len > 0 and self.air_instructions.getLast() == .reverse) {
         _ = self.air_instructions.pop();
     }
 
@@ -2212,20 +2208,20 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
             .boolean => |boolean| @as(i128, @intFromBool(boolean)),
 
             .runtime => {
-                self.error_info = .{ .message = "expected switch case value to be compile time known", .source_loc = SourceLoc.find(self.module.file.buffer, case_token_start) };
+                self.error_info = .{ .message = "expected switch case value to be compile time known", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, case_token_start) };
 
                 return error.WithMessage;
             },
 
             else => {
-                self.error_info = .{ .message = "expected switch case value to be an integer or a boolean", .source_loc = SourceLoc.find(self.module.file.buffer, case_token_start) };
+                self.error_info = .{ .message = "expected switch case value to be an integer or a boolean", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, case_token_start) };
 
                 return error.WithMessage;
             },
         };
 
         if (case_values.contains(case_value_int)) {
-            self.error_info = .{ .message = "duplcicte switch case", .source_loc = SourceLoc.find(self.module.file.buffer, case_token_start) };
+            self.error_info = .{ .message = "duplcicte switch case", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, case_token_start) };
 
             return error.WithMessage;
         }
@@ -2381,7 +2377,7 @@ fn analyzeReturn(self: *Sema, comptime with_value: bool, token_start: u32) Error
         try self.checkUnaryImplicitCast(self.stack.pop(), return_type, token_start);
     } else {
         if (return_type != .void) {
-            self.error_info = .{ .message = "function with non void return type returns void", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+            self.error_info = .{ .message = "function with non void return type returns void", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
             return error.WithMessage;
         }
@@ -2421,7 +2417,7 @@ fn checkUnaryImplicitCast(self: *Sema, lhs: Value, to_type: Type, token_start: u
         try to_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2432,7 +2428,7 @@ fn checkIndexOutOfBounds(self: *Sema, index: Value, lhs_pointer: Type.Pointer, t
         self.compilation.getIntFromId(index.int) >=
         self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
     {
-        self.error_info = .{ .message = "index out of bounds", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "index out of bounds", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2441,7 +2437,7 @@ fn checkIndexOutOfBounds(self: *Sema, index: Value, lhs_pointer: Type.Pointer, t
 fn checkRangeOutOfBounds(self: *Sema, start: Value, end: Value, lhs_pointer: Type.Pointer, token_start: u32) Error!void {
     if (start == .int) {
         if (end == .int and self.compilation.getIntFromId(start.int) > self.compilation.getIntFromId(end.int)) {
-            self.error_info = .{ .message = "range start is greater than range end", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+            self.error_info = .{ .message = "range start is greater than range end", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
             return error.WithMessage;
         }
@@ -2450,7 +2446,7 @@ fn checkRangeOutOfBounds(self: *Sema, start: Value, end: Value, lhs_pointer: Typ
             self.compilation.getIntFromId(start.int) >=
             self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
         {
-            self.error_info = .{ .message = "range start out of bounds", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+            self.error_info = .{ .message = "range start out of bounds", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
             return error.WithMessage;
         }
@@ -2460,7 +2456,7 @@ fn checkRangeOutOfBounds(self: *Sema, start: Value, end: Value, lhs_pointer: Typ
         self.compilation.getIntFromId(end.int) >
         self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
     {
-        self.error_info = .{ .message = "range end out of bounds", .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = "range end out of bounds", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2478,7 +2474,7 @@ fn checkBitShiftCount(self: *Sema, rhs: Value, count_type: Type, token_start: u3
         try count_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2535,7 +2531,7 @@ fn checkIntOrBool(self: *Sema, provided_type: Type, token_start: u32) Error!void
         try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.appendSlice(self.allocator, "' is provided while expected an integer or boolean");
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2549,7 +2545,7 @@ fn checkIntOrFloat(self: *Sema, provided_type: Type, token_start: u32) Error!voi
         try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.appendSlice(self.allocator, "' is provided while expected an integer or float");
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2563,7 +2559,7 @@ fn checkIntOrFloatOrPointer(self: *Sema, provided_type: Type, token_start: u32) 
         try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.appendSlice(self.allocator, "' is provided while expected an integer or float or pointer");
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2577,7 +2573,7 @@ fn checkInt(self: *Sema, provided_type: Type, token_start: u32) Error!void {
         try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.appendSlice(self.allocator, "' is provided while expected an integer");
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2591,7 +2587,7 @@ fn checkIntType(self: *Sema, provided_type: Type, token_start: u32) Error!void {
         try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.appendSlice(self.allocator, "' is provided while expected an integer type");
 
-        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
@@ -2612,7 +2608,7 @@ fn reportIncompatibleTypes(self: *Sema, lhs: Type, rhs: Type, token_start: u32) 
     try rhs.format(self.compilation.*, error_message_buf.writer(self.allocator));
     try error_message_buf.append(self.allocator, '\'');
 
-    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
     return error.WithMessage;
 }
@@ -2622,7 +2618,7 @@ fn reportNotDeclared(self: *Sema, name: Name) Error!noreturn {
 
     try error_message_buf.writer(self.allocator).print("'{s}' is not declared", .{name.buffer});
 
-    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
 
     return error.WithMessage;
 }
@@ -2632,7 +2628,7 @@ fn reportRedeclaration(self: *Sema, name: Name) Error!noreturn {
 
     try error_message_buf.writer(self.allocator).print("redeclaration of '{s}'", .{name.buffer});
 
-    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
 
     return error.WithMessage;
 }
@@ -2644,7 +2640,7 @@ fn reportNotPointer(self: *Sema, provided_type: Type, token_start: u32) Error!no
     try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
     try error_message_buf.appendSlice(self.allocator, "' is provided while expected a pointer");
 
-    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
     return error.WithMessage;
 }
@@ -2656,7 +2652,7 @@ fn reportNotIndexable(self: *Sema, provided_type: Type, token_start: u32) Error!
     try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
     try error_message_buf.appendSlice(self.allocator, "' does not support indexing");
 
-    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
     return error.WithMessage;
 }
@@ -2668,7 +2664,7 @@ fn reportNotComparable(self: *Sema, provided_type: Type, token_start: u32) Error
     try provided_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
     try error_message_buf.appendSlice(self.allocator, "' does not support comparison");
 
-    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, token_start) };
+    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
     return error.WithMessage;
 }
@@ -2678,7 +2674,7 @@ fn reportCircularDependency(self: *Sema, name: Name) Error!noreturn {
 
     try error_message_buf.writer(self.allocator).print("'{s}' is circularly dependent on itself", .{name.buffer});
 
-    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.module.file.buffer, name.token_start) };
+    self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
 
     return error.WithMessage;
 }

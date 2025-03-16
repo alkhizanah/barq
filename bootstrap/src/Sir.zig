@@ -181,6 +181,7 @@ pub const Instruction = union(enum) {
         parameters_count: usize,
         is_var_args: bool,
         token_start: u32,
+        calling_convention: Type.Function.CallingConvention,
     };
 
     pub const Function = struct {
@@ -1347,18 +1348,13 @@ pub const Parser = struct {
             try self.sir_instructions.append(self.allocator, .{ .get = .{ .buffer = "void", .token_start = 0 } });
         }
 
-        try self.sir_instructions.append(self.allocator, .{
-            .function_type = .{
-                .parameters_count = parameters.items.len,
-                .is_var_args = is_var_args,
-                .token_start = fn_keyword_start,
-            },
-        });
-
         var maybe_foreign: ?Range = null;
+        var maybe_calling_convention: ?Type.Function.CallingConvention = null;
 
-        if (self.tokenTag() == .special_identifier) {
-            if (std.mem.eql(u8, self.tokenValue(), "foreign")) {
+        while (self.tokenTag() == .special_identifier) {
+            const special_identifier = self.tokenValue();
+
+            if (std.mem.eql(u8, special_identifier, "foreign")) {
                 self.advance();
 
                 if (!self.eat(.open_paren)) {
@@ -1382,12 +1378,59 @@ pub const Parser = struct {
                 }
 
                 maybe_foreign = self.sir_instructions.pop().string;
+            } else if (std.mem.eql(u8, special_identifier, "callconv")) {
+                self.advance();
+
+                if (!self.eat(.open_paren)) {
+                    self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                if (self.tokenTag() != .identifier) {
+                    self.error_info = .{ .message = "expected a valid identifier", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                const identifier = self.tokenValue();
+
+                maybe_calling_convention = if (std.mem.eql(u8, identifier, "auto"))
+                    .auto
+                else if (std.mem.eql(u8, identifier, "naked"))
+                    .naked
+                else if (std.mem.eql(u8, identifier, "c"))
+                    .c
+                else {
+                    self.error_info = .{ .message = "unknown calling convention", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                };
+
+                self.advance();
+
+                if (!self.eat(.close_paren)) {
+                    self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
             } else {
-                self.error_info = .{ .message = "unknown special identifier", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                self.error_info = .{ .message = "unexpected special identifier", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                 return error.WithMessage;
             }
         }
+
+        const calling_convention: Type.Function.CallingConvention = maybe_calling_convention orelse if (maybe_foreign == null) .auto else .c;
+
+        try self.sir_instructions.append(self.allocator, .{
+            .function_type = .{
+                .parameters_count = parameters.items.len,
+                .is_var_args = is_var_args,
+                .token_start = fn_keyword_start,
+                .calling_convention = calling_convention,
+            },
+        });
 
         if (self.tokenTag() == .open_brace) {
             const previous_sir_instructions = self.sir_instructions;

@@ -51,6 +51,13 @@ pub const Type = union(enum) {
         parameter_type_ids: []u32,
         is_var_args: bool,
         return_type_id: u32,
+        calling_convention: CallingConvention,
+
+        pub const CallingConvention = enum {
+            auto,
+            naked,
+            c,
+        };
     };
 
     pub const Struct = struct {
