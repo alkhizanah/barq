@@ -16,42 +16,52 @@ print_entire_file :: fn (handle : Handle) {
     close(handle);
 }
 
+print_stdin_loop :: fn () {
+    stdin := get_stdin_handle();
+
+    while true {
+        print_entire_file(stdin);
+    }
+}
+
+safe_open :: fn (path : [*]const u8) Handle {
+    flags : OpenFlags;
+    flags.mode = OpenMode.read_only;
+
+    handle := posix_open(path, flags);
+
+    if handle < 0 {
+        eprint("error: could not open file: ");
+
+        len : usize = 0;
+
+        while path[len] != 0 {
+            len += 1;
+        }
+
+        eprintln(path[0..len]);
+    }
+
+    return handle;
+}
+
+print_concatenated_files :: fn (paths : [][*]const u8) {
+    i : usize = 0;
+
+    while i < paths.len {
+        print_entire_file(safe_open(paths[i]));
+
+        i += 1;
+    }
+}
+
 main :: fn () {
     args := std.process.args;
 
-    if args.len < 2 {
-        stdin := get_stdin_handle();
-
-        while true {
-            print_entire_file(stdin);
-        }
-    } else {
-        i : usize = 1;
-
-        while i < args.len {
-            flags : OpenFlags;
-            flags.mode = OpenMode.read_only;
-
-            path := args[i];
-            handle := posix_open(path, flags);
-
-            if handle < 0 {
-                eprint("error: could not open file: ");
-
-                len : usize = 0;
-
-                while path[len] != 0 {
-                    len += 1;
-                }
-
-                eprintln(path[0..len]);
-            } else {
-                print_entire_file(handle);
-            }
-
-            i += 1;
-        }
-    }    
+    if args.len < 2 then
+        print_stdin_loop()
+    else
+        print_concatenated_files(args[1..args.len]);
 }
 
 OpenFlags :: std.fs.OpenFlags;
