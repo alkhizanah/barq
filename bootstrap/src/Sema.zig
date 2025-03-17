@@ -589,11 +589,11 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
     });
 
     if (function.body_block) |body_block| {
-        var scope: Scope = .{ .maybe_parent = self.scope };
-        self.scope = &scope;
-        defer self.scope = self.scope.maybe_parent.?;
+        var maybe_previous_scope_value: ?Variable = null;
 
         if (function.name) |name| {
+            maybe_previous_scope_value = self.scope.get(name.buffer);
+
             try self.scope.put(self.allocator, name.buffer, .{
                 .is_const = true,
                 .air_name = air_name,
@@ -601,9 +601,17 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
             });
         }
 
-        const analyzed_body_block = try self.analyzeBlockInstructionsOldScope(body_block);
+        const analyzed_body_block = try self.analyzeBlockInstructions(body_block);
 
         self.air.functions.getPtr(air_name).?.body_block = analyzed_body_block;
+
+        if (function.name) |name| {
+            if (maybe_previous_scope_value) |previous_scope_value| {
+                self.scope.getPtr(name.buffer).?.* = previous_scope_value;
+            } else {
+                _ = self.scope.remove(name.buffer);
+            }
+        }
     }
 
     try self.air_instructions.append(self.allocator, .{ .get_variable_ptr = air_name });
@@ -2026,10 +2034,6 @@ fn analyzeBlockInstructions(self: *Sema, id: u32) Error!u32 {
     self.scope = &scope;
     defer self.scope = self.scope.maybe_parent.?;
 
-    return self.analyzeBlockInstructionsOldScope(id);
-}
-
-fn analyzeBlockInstructionsOldScope(self: *Sema, id: u32) Error!u32 {
     const previous_air_instructions = self.air_instructions;
     defer self.air_instructions = previous_air_instructions;
 

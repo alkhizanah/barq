@@ -377,7 +377,7 @@ SYS :: enum usize {
     mseal = 462,
 }
 
-syscall0 :: fn (code : SYS) usize {
+syscall0 :: fn (code : SYS) usize @callconv(inline) {
     return asm {
         "syscall"
         : "={rax}" (usize)
@@ -386,7 +386,7 @@ syscall0 :: fn (code : SYS) usize {
     };
 }
 
-syscall1 :: fn (code : SYS, arg1 : usize) usize {
+syscall1 :: fn (code : SYS, arg1 : usize) usize @callconv(inline) {
     return asm {
         "syscall"
         : "={rax}" (usize)
@@ -396,7 +396,7 @@ syscall1 :: fn (code : SYS, arg1 : usize) usize {
     };
 }
 
-syscall2 :: fn (code : SYS, arg1 : usize, arg2 : usize) usize {
+syscall2 :: fn (code : SYS, arg1 : usize, arg2 : usize) usize @callconv(inline) {
     return asm {
         "syscall"
         : "={rax}" (usize)
@@ -407,7 +407,7 @@ syscall2 :: fn (code : SYS, arg1 : usize, arg2 : usize) usize {
     };
 }
 
-syscall3 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize) usize {
+syscall3 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize) usize @callconv(inline) {
     return asm {
         "syscall"
         : "={rax}" (usize)
@@ -419,7 +419,7 @@ syscall3 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize) usize {
     };
 }
 
-syscall4 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize) usize {
+syscall4 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize) usize @callconv(inline) {
     return asm {
         "syscall"
         : "={rax}" (usize)
@@ -432,7 +432,7 @@ syscall4 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usi
     };
 }
 
-syscall5 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize) usize {
+syscall5 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize) usize @callconv(inline) {
     return asm {
         "syscall"
         : "={rax}" (usize)
@@ -446,7 +446,7 @@ syscall5 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usi
     };
 }
 
-syscall6 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize, arg6 : usize) usize {
+syscall6 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize, arg6 : usize) usize @callconv(inline) {
     return asm {
         "syscall"
         : "={rax}" (usize)

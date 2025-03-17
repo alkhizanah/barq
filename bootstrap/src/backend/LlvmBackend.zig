@@ -5,6 +5,7 @@ const c = @cImport({
     @cInclude("llvm-c/Core.h");
     @cInclude("llvm-c/Target.h");
     @cInclude("llvm-c/TargetMachine.h");
+    @cInclude("llvm-c/Transforms/PassBuilder.h");
 });
 
 const Compilation = @import("../Compilation.zig");
@@ -78,6 +79,7 @@ pub fn emit(
     output_file_path: [:0]const u8,
     output_kind: root.OutputKind,
     code_model: root.CodeModel,
+    optimization_mode: root.OptimizationMode,
 ) Error!void {
     c.LLVMSetModuleInlineAsm2(self.module, self.air.global_assembly.items.ptr, self.air.global_assembly.items.len);
 
@@ -125,8 +127,20 @@ pub fn emit(
         const llvm_pointer = c.LLVMAddFunction(self.module, function_name_z.ptr, llvm_type);
 
         switch (function_type.function.calling_convention) {
-            .auto => c.LLVMSetFunctionCallConv(llvm_pointer, c.LLVMFastCallConv),
+            .auto => {
+                c.LLVMSetFunctionCallConv(llvm_pointer, c.LLVMFastCallConv);
+                c.LLVMSetLinkage(llvm_pointer, c.LLVMInternalLinkage);
+            },
             .c => c.LLVMSetFunctionCallConv(llvm_pointer, c.LLVMCCallConv),
+            .@"inline" => {
+                c.LLVMAddAttributeAtIndex(
+                    llvm_pointer,
+                    @bitCast(c.LLVMAttributeFunctionIndex),
+                    c.LLVMCreateEnumAttribute(self.context, c.LLVMGetEnumAttributeKindForName("alwaysinline", 12), 1),
+                );
+
+                c.LLVMSetLinkage(llvm_pointer, c.LLVMPrivateLinkage);
+            },
             .naked => c.LLVMAddAttributeAtIndex(
                 llvm_pointer,
                 @bitCast(c.LLVMAttributeFunctionIndex),
@@ -184,7 +198,10 @@ pub fn emit(
         target_triple,
         llvm_cpu_name,
         llvm_cpu_features,
-        c.LLVMCodeGenLevelDefault,
+        switch (optimization_mode) {
+            .debug => c.LLVMCodeGenLevelDefault,
+            .release => c.LLVMCodeGenLevelAggressive,
+        },
         c.LLVMRelocPIC,
         switch (code_model) {
             .default => c.LLVMCodeModelDefault,
@@ -195,6 +212,29 @@ pub fn emit(
             .large => c.LLVMCodeModelLarge,
         },
     );
+
+    const pass_builder_options = c.LLVMCreatePassBuilderOptions();
+
+    c.LLVMPassBuilderOptionsSetLoopUnrolling(pass_builder_options, 1);
+    c.LLVMPassBuilderOptionsSetLoopVectorization(pass_builder_options, 1);
+    c.LLVMPassBuilderOptionsSetLoopInterleaving(pass_builder_options, 1);
+    c.LLVMPassBuilderOptionsSetMergeFunctions(pass_builder_options, 1);
+    c.LLVMPassBuilderOptionsSetCallGraphProfile(pass_builder_options, 1);
+
+    const debug_optimization_passes = "function(ee-instrument<>),always-inline,coro-cond(coro-early,cgscc(coro-split),coro-cleanup,globaldce),function(annotation-remarks)";
+    const release_optimization_passes = "annotation2metadata,forceattrs,inferattrs,coro-early,function<eager-inv>(ee-instrument<>,lower-expect,simplifycfg<bonus-inst-threshold=1;no-forward-switch-cond;no-switch-range-to-icmp;no-switch-to-lookup;keep-loops;no-hoist-common-insts;no-sink-common-insts;speculate-blocks;simplify-cond-branch;no-speculate-unpredictables>,early-cse<>,callsite-splitting),openmp-opt,ipsccp,called-value-propagation,globalopt,function<eager-inv>(mem2reg,simplifycfg<bonus-inst-threshold=1;no-forward-switch-cond;switch-range-to-icmp;no-switch-to-lookup;keep-loops;no-hoist-common-insts;no-sink-common-insts;speculate-blocks;simplify-cond-branch;no-speculate-unpredictables>),always-inline,require<globals-aa>,function(invalidate<aa>),require<profile-summary>,cgscc(devirt<4>(inline,function-attrs<skip-non-recursive-function-attrs>,argpromotion,openmp-opt-cgscc,function<eager-inv;no-rerun>(early-cse<memssa>,speculative-execution<only-if-divergent-target>,jump-threading,correlated-propagation,simplifycfg<bonus-inst-threshold=1;no-forward-switch-cond;switch-range-to-icmp;no-switch-to-lookup;keep-loops;no-hoist-common-insts;no-sink-common-insts;speculate-blocks;simplify-cond-branch;no-speculate-unpredictables>,libcalls-shrinkwrap,tailcallelim,simplifycfg<bonus-inst-threshold=1;no-forward-switch-cond;switch-range-to-icmp;no-switch-to-lookup;keep-loops;no-hoist-common-insts;no-sink-common-insts;speculate-blocks;simplify-cond-branch;no-speculate-unpredictables>,reassociate,constraint-elimination,loop-mssa(loop-instsimplify,loop-simplifycfg,licm<no-allowspeculation>,loop-rotate<header-duplication;no-prepare-for-lto>,licm<allowspeculation>,simple-loop-unswitch<nontrivial;trivial>),simplifycfg<bonus-inst-threshold=1;no-forward-switch-cond;switch-range-to-icmp;no-switch-to-lookup;keep-loops;no-hoist-common-insts;no-sink-common-insts;speculate-blocks;simplify-cond-branch;no-speculate-unpredictables>,loop(loop-idiom,indvars,simple-loop-unswitch<nontrivial;trivial>,loop-deletion,loop-unroll-full),vector-combine,mldst-motion<no-split-footer-bb>,gvn<>,sccp,bdce,jump-threading,correlated-propagation,adce,memcpyopt,dse,move-auto-init,loop-mssa(licm<allowspeculation>),coro-elide,simplifycfg<bonus-inst-threshold=1;no-forward-switch-cond;switch-range-to-icmp;no-switch-to-lookup;keep-loops;hoist-common-insts;sink-common-insts;speculate-blocks;simplify-cond-branch;no-speculate-unpredictables>),function-attrs,function(require<should-not-run-function-passes>),coro-split)),deadargelim,coro-cleanup,globalopt,globaldce,elim-avail-extern,rpo-function-attrs,recompute-globalsaa,function<eager-inv>(float2int,lower-constant-intrinsics,chr,loop(loop-rotate<header-duplication;no-prepare-for-lto>,loop-deletion),loop-distribute,inject-tli-mappings,loop-vectorize<no-interleave-forced-only;no-vectorize-forced-only;>,infer-alignment,loop-load-elim,simplifycfg<bonus-inst-threshold=1;forward-switch-cond;switch-range-to-icmp;switch-to-lookup;no-keep-loops;hoist-common-insts;sink-common-insts;speculate-blocks;simplify-cond-branch;no-speculate-unpredictables>,slp-vectorizer,vector-combine,loop-unroll<O3>,transform-warning,infer-alignment,loop-mssa(licm<allowspeculation>),alignment-from-assumptions,loop-sink,instsimplify,div-rem-pairs,tailcallelim,simplifycfg<bonus-inst-threshold=1;no-forward-switch-cond;switch-range-to-icmp;no-switch-to-lookup;keep-loops;no-hoist-common-insts;no-sink-common-insts;speculate-blocks;simplify-cond-branch;speculate-unpredictables>),globaldce,constmerge,cg-profile,rel-lookup-table-converter,function(annotation-remarks)";
+
+    _ = c.LLVMRunPasses(
+        self.module,
+        switch (optimization_mode) {
+            .debug => debug_optimization_passes,
+            .release => release_optimization_passes,
+        },
+        target_machine,
+        pass_builder_options,
+    );
+
+    c.LLVMDisposePassBuilderOptions(pass_builder_options);
 
     _ = c.LLVMTargetMachineEmitToFile(
         target_machine,

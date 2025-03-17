@@ -166,10 +166,11 @@ pub fn emit(
     output_file_path: [:0]const u8,
     output_kind: root.OutputKind,
     code_model: root.CodeModel,
+    optimization_mode: root.OptimizationMode,
 ) std.mem.Allocator.Error!void {
     var backend = try LlvmBackend.init(self.allocator, self, air);
     defer backend.deinit();
-    try backend.emit(output_file_path, output_kind, code_model);
+    try backend.emit(output_file_path, output_kind, code_model, optimization_mode);
 }
 
 /// Link an object file into an executable file

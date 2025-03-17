@@ -27,6 +27,11 @@ pub const CodeModel = enum {
     large,
 };
 
+pub const OptimizationMode = enum {
+    debug,
+    release,
+};
+
 pub const Cli = struct {
     allocator: std.mem.Allocator,
 
@@ -45,6 +50,7 @@ pub const Cli = struct {
             runner_kind: RunnerKind,
             target: std.Target,
             code_model: CodeModel,
+            optimization_mode: OptimizationMode,
 
             const usage =
                 \\Usage:
@@ -58,9 +64,11 @@ pub const Cli = struct {
                 \\                                    [executable (default), none]
                 \\  --target <arch-os-abi>         -- specify the target query
                 \\
-                \\  --code-model <code-model>     -- specify the code model
+                \\  --code-model <code-model>      -- specify the code model
                 \\                                    [default, tiny, small, kernel, medium, large]
                 \\
+                \\  --optimize <optimization-mode> -- specify the optimization mode
+                \\                                    [debug, release]
                 \\
             ;
         };
@@ -70,6 +78,7 @@ pub const Cli = struct {
             runner_kind: RunnerKind,
             target: std.Target,
             code_model: CodeModel,
+            optimization_mode: OptimizationMode,
             arguments: []const []const u8,
 
             const usage =
@@ -84,6 +93,8 @@ pub const Cli = struct {
                 \\  --code-model <code-model>     -- specify the code model
                 \\                                    [default, tiny, small, kernel, medium, large]
                 \\
+                \\  --optimize <optimization-mode> -- specify the optimization mode
+                \\                                    [debug, release]
                 \\
             ;
         };
@@ -188,6 +199,20 @@ pub const Cli = struct {
         }
     }
 
+    fn parseOptimizeOption(self: Cli, raw_optimization_mode: []const u8) ?OptimizationMode {
+        if (std.mem.eql(u8, raw_optimization_mode, "debug")) {
+            return .debug;
+        } else if (std.mem.eql(u8, raw_optimization_mode, "release")) {
+            return .release;
+        } else {
+            std.debug.print(Command.Compile.usage, .{self.program});
+
+            std.debug.print("Error: unrecognized optimization mode: {s}\n", .{raw_optimization_mode});
+
+            return null;
+        }
+    }
+
     fn parseTargetQueryOption(raw_target_query: []const u8) ?std.Target {
         const target_query = std.Target.Query.parse(.{ .arch_os_abi = raw_target_query }) catch |err| {
             std.debug.print("Error: could not parse target query: {s}\n", .{errorDescription(err)});
@@ -223,6 +248,7 @@ pub const Cli = struct {
                 var runner_kind: RunnerKind = .executable;
                 var target: std.Target = builtin.target;
                 var code_model: CodeModel = .default;
+                var optimization_mode: OptimizationMode = .debug;
 
                 while (argument_iterator.next()) |next_argument| {
                     if (std.mem.eql(u8, next_argument, "--output")) {
@@ -273,6 +299,16 @@ pub const Cli = struct {
 
                             return null;
                         }
+                    } else if (std.mem.eql(u8, next_argument, "--optimize")) {
+                        if (argument_iterator.next()) |raw_optimization_mode| {
+                            optimization_mode = self.parseOptimizeOption(raw_optimization_mode) orelse return null;
+                        } else {
+                            std.debug.print(Command.Compile.usage, .{self.program});
+
+                            std.debug.print("Error: expected optimization mode\n", .{});
+
+                            return null;
+                        }
                     } else {
                         std.debug.print(Command.Compile.usage, .{self.program});
 
@@ -290,6 +326,7 @@ pub const Cli = struct {
                         .runner_kind = runner_kind,
                         .target = target,
                         .code_model = code_model,
+                        .optimization_mode = optimization_mode,
                     },
                 };
             } else if (std.mem.eql(u8, argument, "run")) {
@@ -304,6 +341,7 @@ pub const Cli = struct {
                 var runner_kind: RunnerKind = .executable;
                 var target: std.Target = builtin.target;
                 var code_model: CodeModel = .default;
+                var optimization_mode: OptimizationMode = .debug;
 
                 while (argument_iterator.next()) |next_argument| {
                     if (std.mem.eql(u8, next_argument, "--runner")) {
@@ -336,6 +374,16 @@ pub const Cli = struct {
 
                             return null;
                         }
+                    } else if (std.mem.eql(u8, next_argument, "--optimize")) {
+                        if (argument_iterator.next()) |raw_optimization_mode| {
+                            optimization_mode = self.parseOptimizeOption(raw_optimization_mode) orelse return null;
+                        } else {
+                            std.debug.print(Command.Compile.usage, .{self.program});
+
+                            std.debug.print("Error: expected optimization mode\n", .{});
+
+                            return null;
+                        }
                     } else if (std.mem.eql(u8, next_argument, "--")) {
                         var remaining_arguments: std.ArrayListUnmanaged([]const u8) = .{};
 
@@ -353,6 +401,7 @@ pub const Cli = struct {
                                 .runner_kind = runner_kind,
                                 .target = target,
                                 .code_model = code_model,
+                                .optimization_mode = optimization_mode,
                                 .arguments = remaining_arguments.toOwnedSlice(self.allocator) catch |err| {
                                     std.debug.print("Error: {s}\n", .{errorDescription(err)});
 
@@ -371,6 +420,7 @@ pub const Cli = struct {
                         .runner_kind = runner_kind,
                         .target = target,
                         .code_model = code_model,
+                        .optimization_mode = optimization_mode,
                         .arguments = &.{},
                     },
                 };
@@ -404,6 +454,7 @@ pub const Cli = struct {
         runner_kind: RunnerKind,
         target: std.Target,
         code_model: CodeModel,
+        optimization_mode: OptimizationMode,
     ) u8 {
         var barq_lib_dir = Compilation.Environment.BarqLib.openDir() catch |err| {
             std.debug.print("Error: could not open the barq library directory: {s}\n", .{errorDescription(err)});
@@ -570,7 +621,7 @@ pub const Cli = struct {
 
                 defer self.allocator.free(assembly_file_path);
 
-                compilation.emit(air, assembly_file_path, output_kind, code_model) catch |err| {
+                compilation.emit(air, assembly_file_path, output_kind, code_model, optimization_mode) catch |err| {
                     std.debug.print("Error: could not emit assembly file: {s}\n", .{errorDescription(err)});
 
                     return 1;
@@ -589,7 +640,7 @@ pub const Cli = struct {
 
                 defer self.allocator.free(object_file_path);
 
-                compilation.emit(air, object_file_path, output_kind, code_model) catch |err| {
+                compilation.emit(air, object_file_path, output_kind, code_model, optimization_mode) catch |err| {
                     std.debug.print("Error: could not emit object file: {s}\n", .{errorDescription(err)});
 
                     return 1;
@@ -638,6 +689,7 @@ pub const Cli = struct {
             options.runner_kind,
             options.target,
             options.code_model,
+            options.optimization_mode,
         );
     }
 
@@ -653,6 +705,7 @@ pub const Cli = struct {
             options.runner_kind,
             options.target,
             options.code_model,
+            options.optimization_mode,
         );
 
         if (compile_step_exit_code != 0) return compile_step_exit_code;

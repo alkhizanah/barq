@@ -55,8 +55,9 @@ pub const Type = union(enum) {
 
         pub const CallingConvention = enum {
             auto,
-            naked,
             c,
+            @"inline",
+            naked,
         };
     };
 

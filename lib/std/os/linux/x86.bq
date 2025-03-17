@@ -455,7 +455,7 @@ SYS :: enum usize {
     mseal = 462,
 }
 
-syscall0 :: fn (code : SYS) usize {
+syscall0 :: fn (code : SYS) usize @callconv(inline) {
     return asm {
         "int $$0x80"
         : "={rax}" (usize)
@@ -464,7 +464,7 @@ syscall0 :: fn (code : SYS) usize {
     };
 }
 
-syscall1 :: fn (code : SYS, arg1 : usize) usize {
+syscall1 :: fn (code : SYS, arg1 : usize) usize @callconv(inline) {
     return asm {
         "int $$0x80"
         : "={eax}" (usize)
@@ -474,7 +474,7 @@ syscall1 :: fn (code : SYS, arg1 : usize) usize {
     };
 }
 
-syscall2 :: fn (code : SYS, arg1 : usize, arg2 : usize) usize {
+syscall2 :: fn (code : SYS, arg1 : usize, arg2 : usize) usize @callconv(inline) {
     return asm {
         "int $$0x80"
         : "={eax}" (usize)
@@ -485,7 +485,7 @@ syscall2 :: fn (code : SYS, arg1 : usize, arg2 : usize) usize {
     };
 }
 
-syscall3 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize) usize {
+syscall3 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize) usize @callconv(inline) {
     return asm {
         "int $$0x80"
         : "={eax}" (usize)
@@ -497,7 +497,7 @@ syscall3 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize) usize {
     };
 }
 
-syscall4 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize) usize {
+syscall4 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize) usize @callconv(inline) {
     return asm {
         "int $$0x80"
         : "={eax}" (usize)
@@ -510,7 +510,7 @@ syscall4 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usi
     };
 }
 
-syscall5 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize) usize {
+syscall5 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize) usize @callconv(inline) {
     return asm {
         "int $$0x80"
         : "={eax}" (usize)
@@ -524,7 +524,7 @@ syscall5 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usi
     };
 }
 
-syscall6 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize, arg6 : usize) usize {
+syscall6 :: fn (code : SYS, arg1 : usize, arg2 : usize, arg3 : usize, arg4 : usize, arg5 : usize, arg6 : usize) usize @callconv(inline) {
     // arg5/arg6 are passed via memory as we're out of registers if ebp is used as frame pointer, or
     // if we're compiling with PIC. We push arg5/arg6 on the stack before changing ebp/esp as the
     // compiler may reference arg5/arg6 as an offset relative to ebp/esp.

@@ -1397,10 +1397,12 @@ pub const Parser = struct {
 
                 maybe_calling_convention = if (std.mem.eql(u8, identifier, "auto"))
                     .auto
-                else if (std.mem.eql(u8, identifier, "naked"))
-                    .naked
                 else if (std.mem.eql(u8, identifier, "c"))
                     .c
+                else if (std.mem.eql(u8, identifier, "inline"))
+                    .@"inline"
+                else if (std.mem.eql(u8, identifier, "naked"))
+                    .naked
                 else {
                     self.error_info = .{ .message = "unknown calling convention", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 

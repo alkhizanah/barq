@@ -1,7 +1,7 @@
 std :: @import("../std.bq");
 Os :: std.target.Os;
 
-get_stdin_handle :: fn () std.fs.Handle {
+get_stdin_handle :: fn () std.fs.Handle @callconv(inline) {
     return switch @target_os {
         Os.linux => std.os.linux.STDIN,
 
@@ -9,7 +9,7 @@ get_stdin_handle :: fn () std.fs.Handle {
     };
 }
 
-get_stdout_handle :: fn () std.fs.Handle {
+get_stdout_handle :: fn () std.fs.Handle @callconv(inline) {
     return switch @target_os {
         Os.linux => std.os.linux.STDOUT,
 
@@ -17,7 +17,7 @@ get_stdout_handle :: fn () std.fs.Handle {
     };
 }
 
-get_stderr_handle :: fn () std.fs.Handle {
+get_stderr_handle :: fn () std.fs.Handle @callconv(inline) {
     return switch @target_os {
         Os.linux => std.os.linux.STDERR,
 
@@ -25,20 +25,20 @@ get_stderr_handle :: fn () std.fs.Handle {
     };
 }
 
-print :: fn (str : []const u8) {
+print :: fn (str : []const u8) @callconv(inline) {
     std.fs.write(get_stdout_handle(), str);
 }
 
-println :: fn (str : []const u8) {
+println :: fn (str : []const u8) @callconv(inline) {
     print(str);
     print("\n");
 }
 
-eprint :: fn (str : []const u8) {
+eprint :: fn (str : []const u8) @callconv(inline) {
     std.fs.write(get_stderr_handle(), str);
 }
 
-eprintln :: fn (str : []const u8) {
+eprintln :: fn (str : []const u8) @callconv(inline) {
     eprint(str);
     eprint("\n");
 }
