@@ -4,12 +4,15 @@ print_entire_file :: fn (handle : Handle) {
     chunk : [1024]u8;
 
     while true {
-        n := read(handle, &chunk);
+        n := (&read(handle, &chunk) as *s32).*;
 
-        if n <= 0 {
+        if n > 0 {
+            print(chunk[0..(n as usize)]);
+        } else if n < 0 {
+            eprintln("error: could not read file");
             break;
         } else {
-            print(chunk[0..n]);
+            break;
         }
     }
 
@@ -24,32 +27,20 @@ print_stdin_loop :: fn () {
     }
 }
 
-safe_open :: fn (path : [*]const u8) Handle {
+print_concatenated_files :: fn (paths : [][*]const u8) {
     flags : OpenFlags;
     flags.mode = OpenMode.read_only;
 
-    handle := posix_open(path, flags);
-
-    if handle < 0 {
-        eprint("error: could not open file: ");
-
-        len : usize = 0;
-
-        while path[len] != 0 {
-            len += 1;
-        }
-
-        eprintln(path[0..len]);
-    }
-
-    return handle;
-}
-
-print_concatenated_files :: fn (paths : [][*]const u8) {
     i : usize = 0;
 
     while i < paths.len {
-        print_entire_file(safe_open(paths[i]));
+        handle := posix_open(paths[i], flags);
+
+        if handle < 0 {
+            eprintln("error: could not open file");
+        } else {
+            print_entire_file(handle);
+        }
 
         i += 1;
     }
@@ -58,10 +49,11 @@ print_concatenated_files :: fn (paths : [][*]const u8) {
 main :: fn () {
     args := std.process.args;
 
-    if args.len < 2 then
-        print_stdin_loop()
-    else
+    if args.len < 2 {
+        print_stdin_loop();
+    } else {
         print_concatenated_files(args[1..args.len]);
+    }
 }
 
 OpenFlags :: std.fs.OpenFlags;
