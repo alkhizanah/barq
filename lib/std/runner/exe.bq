@@ -10,8 +10,7 @@ posix_start :: fn () @foreign("_start") @callconv(naked) {
             "xorl %ebp, %ebp"
             "movq %rsp, %rdi"
             "andq $$-16, %rsp"
-            "mov $0, %rcx"
-            "callq *%rcx"
+            "callq ${0:P}"
             :
             : "X" (&posix_call_main_and_exit)
         },
@@ -22,8 +21,7 @@ posix_start :: fn () @foreign("_start") @callconv(naked) {
            "andl $$-16, %esp"
            "subl $$12, %esp"
            "pushl %eax"
-           "mov $0, %ecx"
-           "calll *%ecx"
+           "calll ${0:P}"
            :
            : "X" (&posix_call_main_and_exit)
         },
