@@ -674,7 +674,7 @@ fn emitComparison(self: *LlvmBackend, comptime operation: ComparisonOperation) E
 
     const lhs_type = self.compilation.getTypeFromId(lhs.type_id);
 
-    if (lhs_type == .int) {
+    if (lhs_type == .int or lhs_type == .pointer) {
         try self.stack.append(
             self.allocator,
             .{
