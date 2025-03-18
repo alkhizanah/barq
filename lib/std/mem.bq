@@ -1,0 +1,33 @@
+// TODO: This should be a polymorphic function, but the compiler still doesn't support polymorphic functions
+span :: fn (bytes : [*]const u8, terminator : u8) []const u8 {
+    len : usize = 0;
+
+    while bytes[len] != terminator {
+        len += 1;
+    }
+
+    return bytes[0..len];
+}
+
+// TODO: This should be a polymorphic function, but the compiler still doesn't support polymorphic functions
+eql :: fn (a : []const u8, b : []const u8) bool {
+    if a.len != b.len {
+        return false;
+    } else if a.len == 0 {
+        return true;
+    } else if a.ptr == b.ptr {
+        return true;
+    }
+
+    i : usize = 0;
+
+    while i < a.len {
+        if a[i] != b[i] {
+            return false;
+        }
+
+        i += 1;
+    }
+
+    return true;
+}

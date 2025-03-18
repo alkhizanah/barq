@@ -93,22 +93,6 @@ open_at :: fn (dir_handle : Handle, path : []const u8, flags : OpenFlags) Handle
     return 0;
 }
 
-posix_open :: fn (path : [*]const u8, flags : OpenFlags) Handle {
-    return switch @target_os {
-        Os.linux => std.os.linux.open(path, flags.mode, 0),
-
-        else => 0,
-    };
-}
-
-posix_open_at :: fn (dir_handle : Handle, path : [*]const u8, flags : OpenFlags) Handle {
-    return switch @target_os {
-        Os.linux => std.os.linux.openat(dir_handle, path, flags.mode, 0),
-
-        else => 0,
-    };
-}
-
 close :: fn (handle : Handle) {
     switch @target_os {
         Os.linux => std.os.linux.close(handle),

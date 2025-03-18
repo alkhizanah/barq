@@ -2,6 +2,7 @@ c :: @import("std/c.bq");
 fs :: @import("std/fs.bq");
 io :: @import("std/io.bq");
 math :: @import("std/math.bq");
+mem :: @import("std/mem.bq");
 os :: @import("std/os.bq");
 process :: @import("std/process.bq");
 target :: @import("std/target.bq");

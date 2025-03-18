@@ -34,7 +34,7 @@ print_concatenated_files :: fn (paths : [][*]const u8) {
     i : usize = 0;
 
     while i < paths.len {
-        handle := posix_open(paths[i], flags);
+        handle := open(span(paths[i], 0), flags);
 
         if handle < 0 {
             eprintln("error: could not open file");
@@ -59,7 +59,7 @@ main :: fn () {
 OpenFlags :: std.fs.OpenFlags;
 OpenMode :: std.fs.OpenMode;
 Handle :: std.fs.Handle;
-posix_open :: std.fs.posix_open;
+open :: std.fs.open;
 close :: std.fs.close;
 read :: std.fs.read;
 print :: std.io.print;
@@ -67,3 +67,4 @@ eprint :: std.io.eprint;
 eprintln :: std.io.eprintln;
 get_stdin_handle :: std.io.get_stdin_handle;
 exit :: std.process.exit;
+span :: std.mem.span;
