@@ -29,7 +29,7 @@ air_instructions: *std.ArrayListUnmanaged(Air.Instruction) = undefined,
 
 stack: std.ArrayListUnmanaged(Value) = .{},
 
-scope: *Scope,
+globals: *Globals,
 
 function_type: Type.Function = undefined,
 
@@ -41,8 +41,6 @@ pub const ErrorInfo = struct {
 };
 
 pub const Error = error{ WithMessage, WithoutMessage } || std.mem.Allocator.Error;
-
-pub const Scope = Symbol.Scope(Variable);
 
 const Value = union(enum(u8)) {
     string: Range,
@@ -77,8 +75,10 @@ fn getTypeFromValue(self: Sema, value: Value) std.mem.Allocator.Error!Type {
     };
 }
 
-const Variable = struct {
-    is_const: bool = false,
+pub const Globals = std.StringHashMapUnmanaged(Global);
+
+const Global = struct {
+    is_const: bool,
     air_name: []const u8,
     value: Value,
 };
@@ -86,161 +86,30 @@ const Variable = struct {
 pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, module_id: u32, air: *Air) Error!Sema {
     const module = &compilation.pool.modules.values()[module_id];
 
-    var sema: Sema = .{
+    return Sema{
         .allocator = allocator,
         .compilation = compilation,
         .module_id = module_id,
         .sir = module.sir,
         .air = air,
-        .scope = module.scope,
+        .globals = module.globals,
     };
-
-    try sema.putBuiltinConstants();
-
-    return sema;
 }
 
 pub fn deinit(self: *Sema) void {
     self.stack.deinit(self.allocator);
 }
 
-fn putBuiltinConstants(self: *Sema) std.mem.Allocator.Error!void {
-    try self.scope.ensureUnusedCapacity(self.allocator, 256);
-    try self.compilation.ensureTypesUnusedCapacity(256);
-
-    const c_char_bits = self.compilation.env.target.cTypeBitSize(.char);
-
-    {
-        const c_char_type: Type = .{
-            .int = .{
-                .signedness = if (self.compilation.env.target.charSignedness() == .signed) .signed else .unsigned,
-                .bits = c_char_bits,
-            },
-        };
-
-        inline for (.{ "void", "bool", "c_char" }, .{ .void, .bool, c_char_type }) |name, @"type"| {
-            self.scope.putAssumeCapacity(name, .{
-                .air_name = name,
-                .is_const = true,
-                .value = .{ .type_id = self.compilation.putTypeAssumeCapacity(@"type") },
-            });
-        }
-    }
-
-    {
-        const c_short_bits = self.compilation.env.target.cTypeBitSize(.short);
-        const c_ushort_bits = self.compilation.env.target.cTypeBitSize(.ushort);
-        const c_int_bits = self.compilation.env.target.cTypeBitSize(.int);
-        const c_uint_bits = self.compilation.env.target.cTypeBitSize(.uint);
-        const c_long_bits = self.compilation.env.target.cTypeBitSize(.long);
-        const c_ulong_bits = self.compilation.env.target.cTypeBitSize(.ulong);
-        const c_longlong_bits = self.compilation.env.target.cTypeBitSize(.longlong);
-        const c_ulonglong_bits = self.compilation.env.target.cTypeBitSize(.ulonglong);
-        const ptr_bits = self.compilation.env.target.ptrBitWidth();
-
-        inline for (.{ "c_uchar", "c_ushort", "c_uint", "c_ulong", "c_ulonglong", "usize" }, .{ c_char_bits, c_ushort_bits, c_uint_bits, c_ulong_bits, c_ulonglong_bits, ptr_bits }) |name, bits| {
-            self.scope.putAssumeCapacity(name, .{
-                .air_name = name,
-                .is_const = true,
-                .value = .{
-                    .type_id = self.compilation.putTypeAssumeCapacity(.{
-                        .int = .{
-                            .signedness = .unsigned,
-                            .bits = @intCast(bits),
-                        },
-                    }),
-                },
-            });
-        }
-
-        inline for (.{ "c_schar", "c_short", "c_int", "c_long", "c_longlong", "ssize" }, .{ c_char_bits, c_short_bits, c_int_bits, c_long_bits, c_longlong_bits, ptr_bits }) |name, bits| {
-            self.scope.putAssumeCapacity(name, .{
-                .air_name = name,
-                .is_const = true,
-                .value = .{
-                    .type_id = self.compilation.putTypeAssumeCapacity(.{
-                        .int = .{
-                            .signedness = .signed,
-                            .bits = @intCast(bits),
-                        },
-                    }),
-                },
-            });
-        }
-    }
-
-    // TODO: Find a better way, this is very verbose and doesn't scale well for bigger arbitrary sized integer types
-    {
-        const unsigned_int_names = [_][]const u8{ "u0", "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10", "u11", "u12", "u13", "u14", "u15", "u16", "u17", "u18", "u19", "u20", "u21", "u22", "u23", "u24", "u25", "u26", "u27", "u28", "u29", "u30", "u31", "u32", "u33", "u34", "u35", "u36", "u37", "u38", "u39", "u40", "u41", "u42", "u43", "u44", "u45", "u46", "u47", "u48", "u49", "u50", "u51", "u52", "u53", "u54", "u55", "u56", "u57", "u58", "u59", "u60", "u61", "u62", "u63", "u64" };
-
-        for (unsigned_int_names, 0..) |name, bits| {
-            self.scope.putAssumeCapacity(name, .{
-                .air_name = name,
-                .is_const = true,
-                .value = .{
-                    .type_id = self.compilation.putTypeAssumeCapacity(.{
-                        .int = .{
-                            .signedness = .unsigned,
-                            .bits = @intCast(bits),
-                        },
-                    }),
-                },
-            });
-        }
-
-        const signed_int_names = [_][]const u8{ "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15", "s16", "s17", "s18", "s19", "s20", "s21", "s22", "s23", "s24", "s25", "s26", "s27", "s28", "s29", "s30", "s31", "s32", "s33", "s34", "s35", "s36", "s37", "s38", "s39", "s40", "s41", "s42", "s43", "s44", "s45", "s46", "s47", "s48", "s49", "s50", "s51", "s52", "s53", "s54", "s55", "s56", "s57", "s58", "s59", "s60", "s61", "s62", "s63", "s64" };
-
-        for (signed_int_names, 0..) |name, bits| {
-            self.scope.putAssumeCapacity(name, .{
-                .air_name = name,
-                .is_const = true,
-                .value = .{
-                    .type_id = self.compilation.putTypeAssumeCapacity(.{
-                        .int = .{
-                            .signedness = .signed,
-                            .bits = @intCast(bits),
-                        },
-                    }),
-                },
-            });
-        }
-    }
-
-    {
-        const c_float_bits = self.compilation.env.target.cTypeBitSize(.float);
-        const c_double_bits = self.compilation.env.target.cTypeBitSize(.double);
-        // TODO: Type `c_longdouble` requires `f80` and `f128` to be supported.
-
-        inline for (.{ "f16", "f32", "f64", "c_float", "c_double" }, .{ 16, 32, 64, c_float_bits, c_double_bits }) |name, bits| {
-            self.scope.putAssumeCapacity(name, .{
-                .air_name = name,
-                .is_const = true,
-                .value = .{ .type_id = self.compilation.putTypeAssumeCapacity(.{ .float = .{ .bits = @intCast(bits) } }) },
-            });
-        }
-    }
-
-    {
-        inline for (.{ "true", "false" }, .{ true, false }) |name, value| {
-            self.scope.putAssumeCapacity(name, .{
-                .air_name = name,
-                .is_const = true,
-                .value = .{ .boolean = value },
-            });
-        }
-    }
-}
-
 pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
     try self.air.global_assembly.appendSlice(self.allocator, self.sir.global_assembly.items);
 
-    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
+    try self.globals.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
     try self.compilation.pool.lazy_units.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
 
     for (self.sir.constants.keys(), self.sir.constants.values()) |constant_name, constant| {
         const constant_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{}", .{ constant_name, self.module_id });
 
-        self.scope.putAssumeCapacity(constant_name, .{
+        self.globals.putAssumeCapacity(constant_name, .{
             .is_const = true,
             .air_name = constant_air_name,
             .value = undefined,
@@ -256,7 +125,8 @@ pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
     for (self.sir.variables.keys(), self.sir.variables.values()) |variable_name, variable| {
         const variable_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{}", .{ variable_name, self.module_id });
 
-        self.scope.putAssumeCapacity(variable_name, .{
+        self.globals.putAssumeCapacity(variable_name, .{
+            .is_const = false,
             .air_name = variable_air_name,
             .value = undefined,
         });
@@ -271,29 +141,31 @@ pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
 }
 
 pub fn analyze(self: *Sema) Error!void {
+    try self.stack.ensureTotalCapacity(self.allocator, 255);
+
     try self.hoist();
 
     for (self.sir.constants.keys()) |constant_name| {
-        var variable = self.scope.get(constant_name).?;
+        var global = self.globals.get(constant_name).?;
 
-        if (self.compilation.pool.lazy_units.get(variable.air_name)) |lazy_unit| {
-            _ = self.compilation.pool.lazy_units.remove(variable.air_name);
+        if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
+            _ = self.compilation.pool.lazy_units.remove(global.air_name);
 
-            try self.analyzeLazyUnit(&variable, lazy_unit);
+            try self.analyzeLazyUnit(&global, lazy_unit);
 
-            self.scope.getPtr(constant_name).?.* = variable;
+            self.globals.getPtr(constant_name).?.* = global;
         }
     }
 
     for (self.sir.variables.keys()) |variable_name| {
-        var variable = self.scope.get(variable_name).?;
+        var global = self.globals.get(variable_name).?;
 
-        if (self.compilation.pool.lazy_units.get(variable.air_name)) |lazy_unit| {
-            _ = self.compilation.pool.lazy_units.remove(variable.air_name);
+        if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
+            _ = self.compilation.pool.lazy_units.remove(global.air_name);
 
-            try self.analyzeLazyUnit(&variable, lazy_unit);
+            try self.analyzeLazyUnit(&global, lazy_unit);
 
-            self.scope.getPtr(variable_name).?.* = variable;
+            self.globals.getPtr(variable_name).?.* = global;
         }
     }
 }
@@ -327,19 +199,9 @@ fn popType(self: *Sema, token_start: u32) Error!u32 {
     return value.type_id;
 }
 
-fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool.LazyUnit) Error!void {
+fn analyzeLazyUnit(self: *Sema, global: *Global, lazy_unit: Compilation.Pool.LazyUnit) Error!void {
     if (lazy_unit.owner_id == self.module_id) {
-        const previous_scope = self.scope;
-        defer self.scope = previous_scope;
-
-        while (self.scope.maybe_parent) |parent| self.scope = parent;
-
-        const previous_stack = self.stack;
-        defer self.stack = previous_stack;
-
-        self.stack = .{};
-
-        if (variable.is_const) {
+        if (global.is_const) {
             _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(lazy_unit.value_block.?));
 
             const value = self.stack.pop();
@@ -353,7 +215,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
                 return error.WithMessage;
             }
 
-            variable.value = value;
+            global.value = value;
         } else {
             const maybe_value = if (lazy_unit.value_block) |value_block| blk: {
                 _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(value_block));
@@ -410,9 +272,9 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
                 return error.WithMessage;
             }
 
-            variable.value = .{ .runtime = type_id };
+            global.value = .{ .runtime = type_id };
 
-            try self.air.variables.put(self.allocator, variable.air_name, .{
+            try self.air.variables.put(self.allocator, global.air_name, .{
                 .type_id = type_id,
                 .initializer = maybe_initializer,
             });
@@ -420,7 +282,7 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
     } else {
         var sema = try Sema.init(self.allocator, self.compilation, lazy_unit.owner_id, self.air);
 
-        sema.analyzeLazyUnit(variable, lazy_unit) catch |err| {
+        sema.analyzeLazyUnit(global, lazy_unit) catch |err| {
             switch (err) {
                 error.OutOfMemory => std.debug.print("Error: {s}\n", .{root.Cli.errorDescription(err)}),
 
@@ -441,16 +303,20 @@ fn analyzeLazyUnit(self: *Sema, variable: *Variable, lazy_unit: Compilation.Pool
 
 fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
     switch (instruction) {
-        .duplicate => try self.analyzeDuplicate(),
-        .reverse => |count| try self.analyzeReverse(true, count),
-        .comptime_reverse => |count| try self.analyzeReverse(false, count),
-        .pop => try self.analyzePop(),
-
         .string => |string| try self.analyzeString(string),
         .int => |int| try self.analyzeInt(int),
         .float => |float| try self.analyzeFloat(float),
+        .boolean => |boolean| try self.analyzeBoolean(boolean),
         .function => |function| try self.analyzeFunction(function),
 
+        .void_type => try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(.void) }),
+        .bool_type => try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(.bool) }),
+        .int_type => |int_type| try self.stack.append(self.allocator, .{
+            .type_id = try self.compilation.putType(.{ .int = int_type }),
+        }),
+        .float_type => |float_type| try self.stack.append(self.allocator, .{
+            .type_id = try self.compilation.putType(.{ .float = float_type }),
+        }),
         .array_type => |token_start| try self.analyzeArrayType(token_start),
         .pointer_type => |pointer_type| try self.analyzePointerType(pointer_type),
         .struct_type => |struct_type| try self.analyzeStructType(struct_type),
@@ -467,8 +333,8 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
         .bit_or => |token_start| try self.analyzeBitwiseArithmetic(.bit_or, token_start),
         .bit_xor => |token_start| try self.analyzeBitwiseArithmetic(.bit_xor, token_start),
 
-        .write => |token_start| try self.analyzeWrite(token_start),
-        .read => |token_start| try self.analyzeRead(token_start),
+        .load => |token_start| try self.analyzeLoad(token_start),
+        .store => |token_start| try self.analyzeStore(token_start),
         .reference => |token_start| try self.analyzeReference(token_start),
 
         .add => |token_start| try self.analyzeArithmetic(.add, token_start),
@@ -484,7 +350,7 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
         .shl => |token_start| try self.analyzeBitwiseShift(.left, token_start),
         .shr => |token_start| try self.analyzeBitwiseShift(.right, token_start),
 
-        .parameters => |names| try self.analyzeParameters(names),
+        .parameter => |index| try self.analyzeParameter(index),
 
         .cast => |cast| try self.analyzeCast(cast),
 
@@ -494,13 +360,17 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
 
         .call => |call| try self.analyzeCall(call),
 
-        .constant => |name| try self.analyzeConstant(name),
+        .alloca => |token_start| try self.analyzeAlloca(false, token_start),
+        .alloca_infer => |token_start| try self.analyzeAlloca(true, token_start),
 
-        .variable => |name| try self.analyzeVariable(false, name),
-        .variable_infer => |name| try self.analyzeVariable(true, name),
+        .get_global_val => |name| try self.analyzeGetGlobalVal(null, name),
+        .set_global_val => |name| try self.analyzeSetGlobalVal(name),
 
-        .get => |name| try self.analyzeGet(null, name),
-        .set => |name| try self.analyzeSet(name),
+        .duplicate => |maybe_stack_index| try self.analyzeDuplicate(maybe_stack_index),
+        .reverse => |count| try self.analyzeReverse(true, count),
+        .comptime_reverse => |count| try self.analyzeReverse(false, count),
+        .pop => |count| try self.analyzePop(count),
+
         .pre_get_element => |token_start| try self.analyzePreGetElement(token_start),
         .get_element => |token_start| try self.analyzeGetElement(token_start),
         .get_field => |name| try self.analyzeGetField(name),
@@ -519,10 +389,14 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
     }
 }
 
-fn analyzeDuplicate(self: *Sema) Error!void {
-    try self.stack.append(self.allocator, self.stack.getLast());
+fn analyzeDuplicate(self: *Sema, maybe_stack_index: ?u32) Error!void {
+    if (maybe_stack_index) |stack_index| {
+        try self.stack.append(self.allocator, self.stack.items[stack_index]);
+    } else {
+        try self.stack.append(self.allocator, self.stack.getLast());
+    }
 
-    try self.air_instructions.append(self.allocator, .duplicate);
+    try self.air_instructions.append(self.allocator, .{ .duplicate = maybe_stack_index });
 }
 
 fn analyzeReverse(self: *Sema, comptime emit_air: bool, count: u32) Error!void {
@@ -531,14 +405,21 @@ fn analyzeReverse(self: *Sema, comptime emit_air: bool, count: u32) Error!void {
     if (emit_air) try self.air_instructions.append(self.allocator, .{ .reverse = count });
 }
 
-fn analyzePop(self: *Sema) Error!void {
-    if (self.stack.popOrNull()) |unused_value| {
-        switch (unused_value) {
-            .type_id, .module_id => {},
-            else => if (try self.getTypeFromValue(unused_value) != .void)
-                try self.air_instructions.append(self.allocator, .pop),
+fn analyzePop(self: *Sema, count: u32) Error!void {
+    var pop_count: u32 = 0;
+
+    for (0..count) |_| {
+        if (self.stack.popOrNull()) |unused_value| {
+            switch (unused_value) {
+                .type_id, .module_id => {},
+                else => if (try self.getTypeFromValue(unused_value) != .void) {
+                    pop_count += 1;
+                },
+            }
         }
     }
+
+    try self.air_instructions.append(self.allocator, .{ .pop = pop_count });
 }
 
 fn analyzeString(self: *Sema, range: Range) Error!void {
@@ -559,6 +440,12 @@ fn analyzeFloat(self: *Sema, float: f64) Error!void {
     try self.air_instructions.append(self.allocator, .{ .float = float });
 }
 
+fn analyzeBoolean(self: *Sema, boolean: bool) Error!void {
+    try self.stack.append(self.allocator, .{ .boolean = boolean });
+
+    try self.air_instructions.append(self.allocator, .{ .boolean = boolean });
+}
+
 threadlocal var prng = std.Random.DefaultPrng.init(0);
 
 fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
@@ -568,11 +455,6 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
     const function_type_id = try self.popType(function.token_start);
 
     self.function_type = self.compilation.getTypeFromId(function_type_id).function;
-
-    const previous_scope = self.scope;
-    defer self.scope = previous_scope;
-
-    while (self.scope.maybe_parent) |parent| self.scope = parent;
 
     const air_name = if (function.foreign) |foreign|
         try self.allocator.dupe(u8, self.compilation.getStringFromRange(foreign))
@@ -589,32 +471,42 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
     });
 
     if (function.body_block) |body_block| {
-        var maybe_previous_scope_value: ?Variable = null;
+        var maybe_previous_global: ?Global = null;
 
         if (function.name) |name| {
-            maybe_previous_scope_value = self.scope.get(name.buffer);
+            maybe_previous_global = self.globals.get(name.buffer);
 
-            try self.scope.put(self.allocator, name.buffer, .{
+            try self.globals.put(self.allocator, name.buffer, .{
                 .is_const = true,
                 .air_name = air_name,
                 .value = .{ .function = function_id },
             });
         }
 
+        const previous_stack = self.stack;
+
+        self.stack = .{};
+
+        try self.stack.ensureTotalCapacity(self.allocator, 255);
+
         const analyzed_body_block = try self.analyzeBlockInstructions(body_block);
+
+        self.stack.deinit(self.allocator);
+
+        self.stack = previous_stack;
 
         self.air.functions.getPtr(air_name).?.body_block = analyzed_body_block;
 
         if (function.name) |name| {
-            if (maybe_previous_scope_value) |previous_scope_value| {
-                self.scope.getPtr(name.buffer).?.* = previous_scope_value;
+            if (maybe_previous_global) |previous_scope_value| {
+                self.globals.getPtr(name.buffer).?.* = previous_scope_value;
             } else {
-                _ = self.scope.remove(name.buffer);
+                _ = self.globals.remove(name.buffer);
             }
         }
     }
 
-    try self.air_instructions.append(self.allocator, .{ .get_variable_ptr = air_name });
+    try self.air_instructions.append(self.allocator, .{ .get_global_ptr = air_name });
 
     try self.stack.append(self.allocator, .{ .function = function_id });
 }
@@ -639,6 +531,9 @@ fn analyzeArrayType(self: *Sema, token_start: u32) Error!void {
     };
 
     try self.checkUnaryImplicitCast(array_length_value, usize_type, token_start);
+
+    // Array length is still on stack, we have to pop it
+    try self.air_instructions.append(self.allocator, .{ .pop = 1 });
 
     try self.stack.append(self.allocator, .{
         .type_id = try self.compilation.putType(.{
@@ -891,7 +786,7 @@ fn analyzeBitwiseArithmetic(self: *Sema, comptime operation: BitwiseArithmeticOp
 
                 const result_int_id = try self.compilation.putInt(result);
 
-                try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .int = result_int_id } });
+                try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .int = result_int_id } });
 
                 return self.stack.append(self.allocator, .{ .int = result_int_id });
             },
@@ -907,7 +802,7 @@ fn analyzeBitwiseArithmetic(self: *Sema, comptime operation: BitwiseArithmeticOp
                     .bit_xor => @intFromBool(lhs_boolean) ^ @intFromBool(rhs_boolean),
                 } == 1;
 
-                try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .boolean = result } });
+                try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .boolean = result } });
 
                 return self.stack.append(self.allocator, .{ .boolean = result });
             },
@@ -927,7 +822,27 @@ fn analyzeBitwiseArithmetic(self: *Sema, comptime operation: BitwiseArithmeticOp
     try self.stack.append(self.allocator, .{ .runtime = lhs_type_id });
 }
 
-fn analyzeWrite(self: *Sema, token_start: u32) Error!void {
+fn analyzeLoad(self: *Sema, token_start: u32) Error!void {
+    const rhs = self.stack.pop();
+    const rhs_type = try self.getTypeFromValue(rhs);
+
+    const rhs_pointer = rhs_type.getPointer() orelse try self.reportNotPointer(rhs_type, token_start);
+
+    if (self.compilation.getTypeFromId(rhs_pointer.child_type_id) == .function) {
+        self.error_info = .{
+            .message = "cannot read from function pointers, as they are pointing to the start of instructions in memory, which are not values",
+            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
+        };
+
+        return error.WithMessage;
+    }
+
+    try self.air_instructions.append(self.allocator, .load);
+
+    try self.stack.append(self.allocator, .{ .runtime = rhs_pointer.child_type_id });
+}
+
+fn analyzeStore(self: *Sema, token_start: u32) Error!void {
     const lhs = self.stack.pop();
     const lhs_type = try self.getTypeFromValue(lhs);
 
@@ -952,64 +867,47 @@ fn analyzeWrite(self: *Sema, token_start: u32) Error!void {
 
     try self.checkUnaryImplicitCast(rhs, self.compilation.getTypeFromId(lhs_pointer.child_type_id), token_start);
 
-    try self.air_instructions.append(self.allocator, .write);
+    try self.air_instructions.append(self.allocator, .store);
 }
 
-fn analyzeRead(self: *Sema, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
-    const rhs_type = try self.getTypeFromValue(rhs);
+fn analyzeGetGlobalVal(self: *Sema, maybe_global: ?*Global, name: Name) Error!void {
+    const global = maybe_global orelse self.globals.getPtr(name.buffer) orelse try self.reportNotDeclared(name);
 
-    const rhs_pointer = rhs_type.getPointer() orelse try self.reportNotPointer(rhs_type, token_start);
+    if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
+        _ = self.compilation.pool.lazy_units.remove(global.air_name);
 
-    if (self.compilation.getTypeFromId(rhs_pointer.child_type_id) == .function) {
-        self.error_info = .{
-            .message = "cannot read from function pointers, as they are pointing to the start of instructions in memory, which are not values",
-            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
-        };
-
-        return error.WithMessage;
+        try self.analyzeLazyUnit(global, lazy_unit);
     }
 
-    try self.air_instructions.append(self.allocator, .read);
-
-    try self.stack.append(self.allocator, .{ .runtime = rhs_pointer.child_type_id });
-}
-
-fn analyzeGet(self: *Sema, maybe_variable: ?*Variable, name: Name) Error!void {
-    const variable = maybe_variable orelse self.scope.getPtr(name.buffer) orelse try self.reportNotDeclared(name);
-
-    if (self.compilation.pool.lazy_units.get(variable.air_name)) |lazy_unit| {
-        _ = self.compilation.pool.lazy_units.remove(variable.air_name);
-
-        try self.analyzeLazyUnit(variable, lazy_unit);
-    }
-
-    switch (variable.value) {
+    switch (global.value) {
         .module_id, .type_id => {},
-        .function => |id| try self.air_instructions.append(self.allocator, .{ .get_variable_ptr = self.air.functions.keys()[id] }),
+        .function => |id| try self.air_instructions.append(self.allocator, .{ .get_global_ptr = self.air.functions.keys()[id] }),
         .string => |range| try self.air_instructions.append(self.allocator, .{ .string = range }),
         .int => |id| try self.air_instructions.append(self.allocator, .{ .int = id }),
         .float => |float| try self.air_instructions.append(self.allocator, .{ .float = float }),
         .boolean => |boolean| try self.air_instructions.append(self.allocator, .{ .boolean = boolean }),
-        .runtime => try self.air_instructions.appendSlice(self.allocator, &.{ .{ .get_variable_ptr = variable.air_name }, .read }),
+        .runtime => try self.air_instructions.appendSlice(self.allocator, &.{
+            .{ .get_global_ptr = global.air_name },
+            .load,
+        }),
     }
 
-    try self.stack.append(self.allocator, variable.value);
+    try self.stack.append(self.allocator, global.value);
 }
 
-fn analyzeSet(self: *Sema, name: Name) Error!void {
-    const variable = self.scope.getPtr(name.buffer) orelse try self.reportNotDeclared(name);
+fn analyzeSetGlobalVal(self: *Sema, name: Name) Error!void {
+    const global = self.globals.getPtr(name.buffer) orelse try self.reportNotDeclared(name);
 
-    if (variable.is_const) {
+    if (global.is_const) {
         self.error_info = .{ .message = "cannot mutate the value of a constant", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
 
         return error.WithMessage;
     }
 
-    if (self.compilation.pool.lazy_units.get(variable.air_name)) |lazy_unit| {
-        try self.analyzeLazyUnit(variable, lazy_unit);
+    if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
+        try self.analyzeLazyUnit(global, lazy_unit);
 
-        _ = self.compilation.pool.lazy_units.remove(variable.air_name);
+        _ = self.compilation.pool.lazy_units.remove(global.air_name);
     }
 
     const value = self.stack.pop();
@@ -1023,25 +921,22 @@ fn analyzeSet(self: *Sema, name: Name) Error!void {
         return error.WithMessage;
     }
 
-    try self.checkUnaryImplicitCast(value, try self.getTypeFromValue(variable.value), name.token_start);
+    try self.checkUnaryImplicitCast(value, try self.getTypeFromValue(global.value), name.token_start);
 
-    try self.air_instructions.append(self.allocator, .{ .get_variable_ptr = variable.air_name });
-    try self.air_instructions.append(self.allocator, .write);
+    try self.air_instructions.append(self.allocator, .{ .get_global_ptr = global.air_name });
+    try self.air_instructions.append(self.allocator, .store);
 }
 
 fn analyzeGetField(self: *Sema, name: Name) Error!void {
-    const container_type = try self.getTypeFromValue(self.stack.getLast());
-
-    if (container_type == .@"struct" or (container_type == .pointer and container_type.pointer.size == .slice))
-        try self.analyzeReference(name.token_start);
-
     const container = self.stack.pop();
+    const container_type_id = try self.getTypeIdFromValue(container);
+    var container_type = self.compilation.getTypeFromId(container_type_id);
 
     if (container == .module_id) {
-        if (self.compilation.getModulePtrFromId(container.module_id).scope.get(name.buffer)) |module_variable| {
-            var mutable_module_variable = module_variable;
-            try self.analyzeGet(&mutable_module_variable, name);
-            self.compilation.getModulePtrFromId(container.module_id).scope.getPtr(name.buffer).?.* = mutable_module_variable;
+        if (self.compilation.getModulePtrFromId(container.module_id).globals.get(name.buffer)) |module_global| {
+            var mutable_module_global = module_global;
+            try self.analyzeGetGlobalVal(&mutable_module_global, name);
+            self.compilation.getModulePtrFromId(container.module_id).globals.getPtr(name.buffer).?.* = mutable_module_global;
             return;
         }
     } else if (container == .type_id and self.compilation.getTypeFromId(container.type_id) == .@"enum") {
@@ -1054,7 +949,24 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
                 return self.stack.append(self.allocator, .{ .int = enum_field.int_id });
             }
         }
-    } else if (container_type == .array or
+    }
+
+    if (self.air_instructions.items.len > 0 and
+        self.air_instructions.getLast() == .load and
+        (container_type != .pointer or (container_type == .pointer and container_type.pointer.size == .slice)))
+    {
+        _ = self.air_instructions.pop();
+
+        container_type = .{
+            .pointer = .{
+                .size = .one,
+                .is_const = false,
+                .child_type_id = container_type_id,
+            },
+        };
+    }
+
+    if (container_type == .array or
         (container_type == .pointer and self.compilation.getTypeFromId(container_type.pointer.child_type_id) == .array))
     {
         if (std.mem.eql(u8, name.buffer, "len")) {
@@ -1063,7 +975,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
             else
                 container_type.array;
 
-            try self.air_instructions.append(self.allocator, .pop);
+            try self.air_instructions.append(self.allocator, .{ .pop = 1 });
             try self.air_instructions.append(self.allocator, .{ .int = container_array.len_int_id });
 
             return self.stack.append(self.allocator, .{ .int = container_array.len_int_id });
@@ -1073,15 +985,23 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
         self.compilation.getTypeFromId(container_type.pointer.child_type_id).pointer.size == .slice)))
     {
         if (std.mem.eql(u8, name.buffer, "len")) {
-            try self.air_instructions.append(self.allocator, .{ .get_field_ptr = 0 });
-            try self.air_instructions.append(self.allocator, .read);
+            if (container_type.pointer.size == .slice) {
+                try self.air_instructions.append(self.allocator, .{ .extract_field = 0 });
+            } else {
+                try self.air_instructions.append(self.allocator, .{ .get_field_ptr = 0 });
+                try self.air_instructions.append(self.allocator, .load);
+            }
 
             const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
 
             return self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(usize_type) });
         } else if (std.mem.eql(u8, name.buffer, "ptr")) {
-            try self.air_instructions.append(self.allocator, .{ .get_field_ptr = 1 });
-            try self.air_instructions.append(self.allocator, .read);
+            if (container_type.pointer.size == .slice) {
+                try self.air_instructions.append(self.allocator, .{ .extract_field = 1 });
+            } else {
+                try self.air_instructions.append(self.allocator, .{ .get_field_ptr = 1 });
+                try self.air_instructions.append(self.allocator, .load);
+            }
 
             return self.stack.append(self.allocator, .{
                 .runtime = try self.compilation.putType(.{
@@ -1103,8 +1023,12 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
 
         for (container_struct.fields, 0..) |struct_field, i| {
             if (std.mem.eql(u8, struct_field.name, name.buffer)) {
-                try self.air_instructions.append(self.allocator, .{ .get_field_ptr = @intCast(i) });
-                try self.air_instructions.append(self.allocator, .read);
+                if (container_type == .@"struct") {
+                    try self.air_instructions.append(self.allocator, .{ .extract_field = @intCast(i) });
+                } else {
+                    try self.air_instructions.append(self.allocator, .{ .get_field_ptr = @intCast(i) });
+                    try self.air_instructions.append(self.allocator, .load);
+                }
 
                 return self.stack.append(self.allocator, .{ .runtime = struct_field.type_id });
             }
@@ -1158,7 +1082,7 @@ fn analyzeHasField(self: *Sema, token_start: u32) Error!void {
     const container = self.stack.pop();
 
     const container_has_field = switch (container) {
-        .module_id => |id| self.compilation.getModulePtrFromId(id).scope.contains(field_name),
+        .module_id => |id| self.compilation.getModulePtrFromId(id).globals.contains(field_name),
         .type_id => |id| self.compilation.getTypeFromId(id).hasField(self.compilation.*, field_name),
 
         else => {
@@ -1171,7 +1095,7 @@ fn analyzeHasField(self: *Sema, token_start: u32) Error!void {
         },
     };
 
-    try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .{ .boolean = container_has_field } });
+    try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 1 }, .{ .boolean = container_has_field } });
     try self.stack.append(self.allocator, .{ .boolean = container_has_field });
 }
 
@@ -1185,7 +1109,7 @@ fn analyzePreGetElement(self: *Sema, token_start: u32) Error!void {
         try self.analyzeReference(token_start);
 
         try self.air_instructions.append(self.allocator, .{ .get_field_ptr = 1 });
-        try self.air_instructions.append(self.allocator, .read);
+        try self.air_instructions.append(self.allocator, .load);
 
         self.stack.items[self.stack.items.len - 1] = .{
             .runtime = try self.compilation.putType(.{
@@ -1217,7 +1141,7 @@ fn analyzeGetElement(self: *Sema, token_start: u32) Error!void {
     try self.checkIndexOutOfBounds(index, lhs_pointer_type, token_start);
 
     try self.air_instructions.append(self.allocator, .get_element_ptr);
-    try self.air_instructions.append(self.allocator, .read);
+    try self.air_instructions.append(self.allocator, .load);
 
     const child_type_id = if (lhs_pointer_type.size == .one)
         self.compilation.getTypeFromId(lhs_pointer_type.child_type_id).array.child_type_id
@@ -1289,21 +1213,20 @@ fn analyzeReference(self: *Sema, token_start: u32) Error!void {
             const last_instruction = &self.air_instructions.items[self.air_instructions.items.len - 1];
 
             switch (last_instruction.*) {
-                .read => _ = self.air_instructions.pop(),
+                .load => _ = self.air_instructions.pop(),
 
                 else => {
-                    const anon_var_name = try std.fmt.allocPrint(self.allocator, "compiler::__anon_{}", .{prng.random().int(u32)});
-
                     if (rhs == .runtime) {
                         try self.air_instructions.appendSlice(self.allocator, &.{
-                            .{ .variable = .{ anon_var_name, rhs_type_id } },
-                            .{ .get_variable_ptr = anon_var_name },
-                            .duplicate,
+                            .{ .alloca = rhs_type_id },
+                            .{ .duplicate = null },
                             .{ .reverse = 3 },
                             .{ .reverse = 2 },
-                            .write,
+                            .store,
                         });
                     } else {
+                        const anon_var_name = try std.fmt.allocPrint(self.allocator, "compiler::__anon_{}", .{prng.random().int(u32)});
+
                         try self.air.variables.put(self.allocator, anon_var_name, .{
                             .type_id = rhs_type_id,
                             .initializer = switch (rhs) {
@@ -1316,7 +1239,7 @@ fn analyzeReference(self: *Sema, token_start: u32) Error!void {
                             },
                         });
 
-                        try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .{ .get_variable_ptr = anon_var_name } });
+                        try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 1 }, .{ .get_global_ptr = anon_var_name } });
                     }
                 },
             }
@@ -1436,7 +1359,7 @@ fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token
 
                 const result_int_id = try self.compilation.putInt(result);
 
-                try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .int = result_int_id } });
+                try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .int = result_int_id } });
 
                 return self.stack.append(self.allocator, .{ .int = result_int_id });
             },
@@ -1460,7 +1383,7 @@ fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token
                     .rem => @rem(lhs_float, rhs_float),
                 };
 
-                try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .float = result } });
+                try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .float = result } });
 
                 return self.stack.append(self.allocator, .{ .float = result });
             },
@@ -1546,7 +1469,7 @@ fn analyzeComparison(self: *Sema, comptime operation: ComparisonOperation, token
                     .eql => lhs_int == rhs_int,
                 };
 
-                try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .boolean = result } });
+                try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .boolean = result } });
 
                 return self.stack.append(self.allocator, .{ .boolean = result });
             },
@@ -1562,7 +1485,7 @@ fn analyzeComparison(self: *Sema, comptime operation: ComparisonOperation, token
                     .eql => lhs_float == rhs_float,
                 };
 
-                try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .boolean = result } });
+                try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .boolean = result } });
 
                 return self.stack.append(self.allocator, .{ .boolean = result });
             },
@@ -1578,7 +1501,7 @@ fn analyzeComparison(self: *Sema, comptime operation: ComparisonOperation, token
                     else => unreachable,
                 };
 
-                try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .boolean = result } });
+                try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .boolean = result } });
 
                 return self.stack.append(self.allocator, .{ .boolean = result });
             },
@@ -1633,7 +1556,7 @@ fn analyzeBitwiseShift(self: *Sema, comptime direction: BitwiseShiftDirection, t
 
         const result_int_id = try self.compilation.putInt(result);
 
-        try self.air_instructions.appendSlice(self.allocator, &.{ .pop, .pop, .{ .int = result_int_id } });
+        try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = 2 }, .{ .int = result_int_id } });
 
         try self.stack.append(self.allocator, .{ .int = result_int_id });
     } else {
@@ -1846,13 +1769,13 @@ fn analyzeImport(self: *Sema, token_start: u32) Error!void {
             return error.WithoutMessage;
         };
 
-        const module_scope_on_heap: *Scope = try self.allocator.create(Scope);
-        module_scope_on_heap.* = .{};
+        const module_globals_on_heap: *Globals = try self.allocator.create(Globals);
+        module_globals_on_heap.* = .{};
 
         const module_id = try self.compilation.putModule(.{
             .file = import_file,
             .sir = sir_parser.sir,
-            .scope = module_scope_on_heap,
+            .globals = module_globals_on_heap,
         });
 
         var sema = try Sema.init(self.allocator, self.compilation, module_id, self.air);
@@ -1944,50 +1867,16 @@ fn analyzeCall(self: *Sema, call: Sir.Instruction.Call) Error!void {
     }
 }
 
-fn analyzeParameters(self: *Sema, names: []Name) Error!void {
-    const detokenized_names = try self.allocator.alloc([]const u8, names.len);
-
-    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(names.len));
-
-    for (names, 0..) |name, i| {
-        if (self.scope.contains(name.buffer)) try self.reportRedeclaration(name);
-
-        detokenized_names[i] = name.buffer;
-
-        self.scope.putAssumeCapacity(name.buffer, .{
-            .air_name = name.buffer,
-            .value = .{ .runtime = self.function_type.parameter_type_ids[i] },
-        });
-    }
-
-    try self.air_instructions.append(self.allocator, .{ .parameters = detokenized_names });
+fn analyzeParameter(self: *Sema, index: u32) Error!void {
+    try self.air_instructions.append(self.allocator, .{ .parameter = index });
+    try self.stack.append(self.allocator, .{ .runtime = self.function_type.parameter_type_ids[index] });
 }
 
-fn analyzeConstant(self: *Sema, name: Name) Error!void {
-    if (self.scope.contains(name.buffer)) try self.reportRedeclaration(name);
-
-    const value = self.stack.pop();
-
-    if (value == .runtime) {
-        self.error_info = .{ .message = "expected the constant value to be compile time known", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start) };
-
-        return error.WithMessage;
-    }
-
-    try self.scope.put(self.allocator, name.buffer, .{
-        .is_const = true,
-        .air_name = name.buffer,
-        .value = value,
-    });
-}
-
-fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
-    if (self.scope.contains(name.buffer)) try self.reportRedeclaration(name);
-
+fn analyzeAlloca(self: *Sema, comptime infer: bool, token_start: u32) Error!void {
     const type_id = if (infer)
         try self.getTypeIdFromValue(self.stack.getLast())
     else
-        try self.popType(name.token_start);
+        try self.popType(token_start);
 
     const @"type" = self.compilation.getTypeFromId(type_id);
 
@@ -1995,7 +1884,7 @@ fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
         .void => {
             self.error_info = .{
                 .message = "cannot declare a variable with type 'void'",
-                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start),
+                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
             };
 
             return error.WithMessage;
@@ -2004,7 +1893,7 @@ fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
         .type => {
             self.error_info = .{
                 .message = "cannot declare a variable with a type being the value",
-                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, name.token_start),
+                .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start),
             };
 
             return error.WithMessage;
@@ -2013,16 +1902,21 @@ fn analyzeVariable(self: *Sema, comptime infer: bool, name: Name) Error!void {
         else => {},
     }
 
-    try self.scope.put(self.allocator, name.buffer, .{
-        .air_name = name.buffer,
-        .value = .{ .runtime = type_id },
-    });
-
     if (self.air_instructions.items.len > 0 and self.air_instructions.getLast() == .reverse) {
         _ = self.air_instructions.pop();
     }
 
-    try self.air_instructions.append(self.allocator, .{ .variable = .{ name.buffer, type_id } });
+    try self.air_instructions.append(self.allocator, .{ .alloca = type_id });
+
+    try self.stack.append(self.allocator, .{
+        .runtime = try self.compilation.putType(.{
+            .pointer = .{
+                .size = .one,
+                .is_const = false,
+                .child_type_id = type_id,
+            },
+        }),
+    });
 }
 
 fn analyzeBlock(self: *Sema, id: u32) Error!void {
@@ -2030,10 +1924,6 @@ fn analyzeBlock(self: *Sema, id: u32) Error!void {
 }
 
 fn analyzeBlockInstructions(self: *Sema, id: u32) Error!u32 {
-    var scope: Scope = .{ .maybe_parent = self.scope };
-    self.scope = &scope;
-    defer self.scope = self.scope.maybe_parent.?;
-
     const previous_air_instructions = self.air_instructions;
     defer self.air_instructions = previous_air_instructions;
 
@@ -2074,11 +1964,9 @@ fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Err
 
     switch (condition) {
         .boolean => |condition_boolean| {
-            try self.air_instructions.append(self.allocator, .pop);
+            try self.air_instructions.append(self.allocator, .{ .pop = 1 });
 
-            const previous_stack = self.stack;
-
-            self.stack = .{};
+            const previous_stack_len = self.stack.items.len;
 
             const maybe_analyzed_block = if (condition_boolean)
                 try self.analyzeBlockInstructions(conditional.then_block)
@@ -2087,9 +1975,7 @@ fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Err
             else
                 null;
 
-            const maybe_value = self.stack.popOrNull();
-
-            self.stack = previous_stack;
+            const maybe_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
 
             if (maybe_value) |value| {
                 switch (value) {
@@ -2113,21 +1999,17 @@ fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Err
         },
 
         else => {
-            const previous_stack = self.stack;
-
-            self.stack = .{};
+            const previous_stack_len = self.stack.items.len;
 
             const analyzed_then_block = try self.analyzeBlockInstructions(conditional.then_block);
-            const maybe_then_value = self.stack.popOrNull();
+            const maybe_then_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
 
             const maybe_analyzed_else_block = if (conditional.else_block) |else_block|
                 try self.analyzeBlockInstructions(else_block)
             else
                 null;
 
-            const maybe_else_value = self.stack.popOrNull();
-
-            self.stack = previous_stack;
+            const maybe_else_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
 
             if (maybe_then_value) |then_value| {
                 var then_value_type_id = try self.getTypeIdFromValue(then_value);
@@ -2166,6 +2048,8 @@ fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Err
 
                 if (else_value_type != .void) {
                     try self.reportIncompatibleTypes(.void, else_value_type, conditional.token_start);
+                } else {
+                    try self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(.void) });
                 }
             } else {
                 try self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(.void) });
@@ -2234,17 +2118,15 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
     }
 
     if (maybe_switched_on_value_int) |switched_on_value_int| {
-        const previous_stack = self.stack;
-
-        self.stack = .{};
+        const previous_stack_len = self.stack.items.len;
 
         const analyzed_block = try self.analyzeBlockInstructions(case_values.get(switched_on_value_int) orelse @"switch".else_block);
 
-        const maybe_value = self.stack.popOrNull();
-
-        self.stack = previous_stack;
+        const maybe_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
 
         if (maybe_value) |value| {
+            try self.air_instructions.append(self.allocator, .{ .pop = case_values.count() + 1 });
+
             switch (value) {
                 .module_id, .type_id => {},
 
@@ -2257,7 +2139,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
 
             try self.stack.append(self.allocator, value);
         } else {
-            try self.air_instructions.append(self.allocator, .{ .block = analyzed_block });
+            try self.air_instructions.appendSlice(self.allocator, &.{ .{ .pop = case_values.count() + 1 }, .{ .block = analyzed_block } });
 
             try self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(.void) });
         }
@@ -2268,18 +2150,14 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
         var result_type: Type = undefined;
 
         for (@"switch".case_blocks, @"switch".case_token_starts, 0..) |case_block, case_token_start, i| {
-            const previous_stack = self.stack;
-
-            self.stack = .{};
+            const previous_stack_len = self.stack.items.len;
 
             const analyzed_case_block = try self.analyzeBlockInstructions(case_block);
 
-            const next_result_type_id = if (self.stack.popOrNull()) |value|
-                try self.getTypeIdFromValue(value)
+            const next_result_type_id = if (self.stack.items.len > previous_stack_len)
+                try self.getTypeIdFromValue(self.stack.pop())
             else
                 try self.compilation.putType(.void);
-
-            self.stack = previous_stack;
 
             const next_result_type = self.compilation.getTypeFromId(next_result_type_id);
 
@@ -2313,18 +2191,14 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
         }
 
         const analyzed_else_block = blk: {
-            const previous_stack = self.stack;
-
-            self.stack = .{};
+            const previous_stack_len = self.stack.items.len;
 
             const analyzed_else_block = try self.analyzeBlockInstructions(@"switch".else_block);
 
-            const next_result_type_id = if (self.stack.popOrNull()) |value|
-                try self.getTypeIdFromValue(value)
+            const next_result_type_id = if (self.stack.items.len > previous_stack_len)
+                try self.getTypeIdFromValue(self.stack.pop())
             else
                 try self.compilation.putType(.void);
-
-            self.stack = previous_stack;
 
             if (analyzed_case_blocks.items.len > 0) {
                 const next_result_type = self.compilation.getTypeFromId(next_result_type_id);

@@ -29,12 +29,6 @@ pub const Function = struct {
 };
 
 pub const Instruction = union(enum) {
-    /// Duplicate the top of the stack
-    duplicate,
-    /// Reverse the stack into nth depth
-    reverse: u32,
-    /// Pop the top of the stack
-    pop,
     /// Push a string onto the stack
     string: Range,
     /// Push an integer onto the stack
@@ -56,9 +50,9 @@ pub const Instruction = union(enum) {
     /// Perform bitwise XOR operation on the bits of lhs and rhs
     bit_xor,
     /// Override the data that the pointer is pointing to
-    write,
+    store,
     /// Read the data that the pointer is pointing to
-    read,
+    load,
     /// Add two integers or floats on the top of the stack
     add,
     /// Subtract two integers or floats on the top of the stack
@@ -83,16 +77,24 @@ pub const Instruction = union(enum) {
     cast: u32,
     /// Place a machine-specific inline assembly in the output
     inline_assembly: InlineAssembly,
-    /// Declare function parameters
-    parameters: [][]const u8,
     /// Call a function pointer on top of the stack
     call: usize,
-    /// Declare a variable using the specified name and type
-    variable: struct { []const u8, u32 },
-    /// Get a pointer to variable
-    get_variable_ptr: []const u8,
+    /// Push the value of a function parameter onto the stack
+    parameter: u32,
+    /// Allocate a local variable with the type provided, and push its pointer on stack
+    alloca: u32,
+    /// Duplicate a value on the stack using an index, or duplicate the top of the stack
+    duplicate: ?u32,
+    /// Reverse the stack into nth depth
+    reverse: u32,
+    /// Pop the stack into nth depth
+    pop: u32,
+    /// Get a pointer to global variable
+    get_global_ptr: []const u8,
     /// Calculate the pointer of an element in a "size many" pointer
     get_element_ptr,
+    /// Extract a field from a struct value
+    extract_field: u32,
     /// Calculate the pointer of a field in a struct pointer
     get_field_ptr: u32,
     /// Make a slice out of a "size many" pointer

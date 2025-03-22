@@ -565,12 +565,12 @@ pub const Cli = struct {
             error.WithoutMessage => {},
         };
 
-        var scope: Sema.Scope = .{};
+        var globals: Sema.Globals = .{};
 
         const module_id = compilation.putModule(.{
             .file = compilation_file,
             .sir = sir_parser.sir,
-            .scope = &scope,
+            .globals = &globals,
         }) catch |err| {
             std.debug.print("Error: {s}\n", .{Cli.errorDescription(err)});
 

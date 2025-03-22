@@ -24,98 +24,6 @@ noise :: fn () {
     }
 }
 
-circle_equation :: fn (boundaries : Vector2, position : *Vector2, color : *Color) {
-    cx := boundaries.x / 2.0;
-    cy := boundaries.y / 2.0;
-
-    dx := position.x - cx;
-    dy := position.y - cy;
-
-    dx_sqr := dx * dx;
-    dy_sqr := dy * dy;
-
-    radius :: 50.0;
-    radius_sqr :: radius * radius;
-
-    if !(dx_sqr + dy_sqr > radius_sqr) {
-        color.r = 0;
-        color.g = 0;
-        color.b = 255;
-        color.a = 255;
-    } else {
-        color.r = 0;
-        color.g = 0;
-        color.b = 0;
-        color.a = 255;
-    }
-}
-
-squircle_equation :: fn (boundaries : Vector2, position : *Vector2, color : *Color) {
-    cx := boundaries.x / 2.0;
-    cy := boundaries.y / 2.0;
-
-    dx := position.x - cx;
-    dy := position.y - cy;
-
-    dx_sqr := dx * dx;
-    dy_sqr := dy * dy;
-
-    squareness :: 0.8;
-    squareness_sqr :: squareness * squareness;
-
-    radius :: 50.0;
-    radius_sqr :: radius * radius;
-
-    if !(dx_sqr + dy_sqr - (squareness_sqr / radius_sqr) * dx_sqr * dy_sqr > radius_sqr) {
-        color.r = 0;
-        color.g = 0;
-        color.b = 255;
-        color.a = 255;
-    } else {
-        color.r = 0;
-        color.g = 0;
-        color.b = 0;
-        color.a = 255;
-    }
-}
-
-graph_equation :: fn (boundaries : Vector2, position : *Vector2, color : *Color) {
-    // circle_equation(boundaries, position, color);
-    // squircle_equation(boundaries, position, color);
-}
-
-graph :: fn () {
-    boundaries : Vector2;
-    boundaries.x = GetRenderWidth() as c_float;
-    boundaries.y = GetRenderHeight() as c_float;
-
-    position : Vector2;
-    position.y = 0.0;
-
-    red : Color;
-    red.r = 255;
-    red.g = 0;
-    red.b = 0;
-    red.a = 255;
-
-    while position.y < boundaries.y {
-        position.x = 0.0;
-
-        while position.x < boundaries.x {
-            draw_position := position;
-            draw_color := red;
-
-            graph_equation(boundaries, &draw_position, &draw_color);
-
-            DrawPixel(draw_position.x as c_int, draw_position.y as c_int, draw_color);
-
-            position.x += 1.0;
-        }
-
-        position.y += 1.0;
-    }
-}
-
 main :: fn () u8 @foreign("main") {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
 
@@ -125,7 +33,6 @@ main :: fn () u8 @foreign("main") {
         BeginDrawing();
 
         noise();
-        // graph();
 
         EndDrawing();
     }

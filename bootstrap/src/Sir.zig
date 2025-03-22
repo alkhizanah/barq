@@ -41,36 +41,39 @@ pub const Constant = struct {
 };
 
 pub const Instruction = union(enum) {
-    /// Duplicate the top of the stack
-    duplicate,
-    /// Reverse the stack into nth depth
-    reverse: u32,
-    /// Same as `reverse` but don't emit air instruction
-    comptime_reverse: u32,
-    /// Pop the top of the stack
-    pop,
     /// Push a string onto the stack
     string: Range,
     /// Push an integer onto the stack
     int: u32,
     /// Push a float onto the stack
     float: f64,
-    /// Push a function value onto stack, function type should be on the stack
+    /// Push a boolean onto the stack
+    boolean: bool,
+    /// Push a function value onto the stack, function type should be on the stack
     function: Function,
-    /// Push an array type onto stack, array length and child type should be on the stack
+    /// Push a void type onto the stack
+    void_type,
+    /// Push a bool type onto the stack
+    bool_type,
+    /// Push an int type onto the stack
+    int_type: Type.Int,
+    /// Push a float type onto the stack
+    float_type: Type.Float,
+    /// Push a float type onto the stack
+    /// Push an array type onto the stack, array length and child type should be on the stack
     array_type: u32,
-    /// Push a pointer type onto stack, child type should be on the stack
+    /// Push a pointer type onto the stack, child type should be on the stack
     pointer_type: PointerType,
-    /// Push a struct type onto stack, provides the name of each field and the type of each field should be on the stack
+    /// Push a struct type onto the stack, provides the name of each field and the type of each field should be on the stack
     struct_type: StructType,
-    /// Push an enum type onto stack, provides the fields and the type of its fields should be on the stack
+    /// Push an enum type onto the stack, provides the fields and the type of its fields should be on the stack
     enum_type: EnumType,
     /// Same as `enum_type` but the type is not on the top of the stack, and should be inferred by the semantic analyzer
     enum_type_infer: EnumType,
-    /// Push a function type onto stack, return type and parameter types should be on the stack
+    /// Push a function type onto the stack, return type and parameter types should be on the stack
     function_type: FunctionType,
-    /// Declare function parameters, type of these parameters should already be known in the function type
-    parameters: []Name,
+    /// Push the value of a function parameter onto the stack
+    parameter: u32,
     /// Negate an integer or float on the top of the stack
     negate: u32,
     /// Reverse a boolean from true to false and from false to true
@@ -83,16 +86,10 @@ pub const Instruction = union(enum) {
     bit_or: u32,
     /// Perform bitwise XOR operation on the bits of lhs and rhs
     bit_xor: u32,
-    /// Reference a value on the stack
-    /// 1. If the value is a comptime value, it will be hoisted into a global variable and then the pointer of the global variable
-    /// will be on the stack
-    /// 2. If the value is a runtime value, it will be in a local variable and then the pointer of the local variable will be on the stack
-    /// 3. If the previous instruction is a `read` air instruction, it will be removed and the pointer of the value will be on the stack
-    reference: u32,
     /// Override the data that the pointer is pointing to
-    write: u32,
-    /// Read the data that the pointer is pointing to
-    read: u32,
+    store: u32,
+    /// load the data that the pointer is pointing to
+    load: u32,
     /// Add two integers or floats or pointers on the top of the stack
     add: u32,
     /// Subtract two integers or floats or pointers on the top of the stack
@@ -113,7 +110,7 @@ pub const Instruction = union(enum) {
     shl: u32,
     /// Shift to right the bits of lhs using rhs offset
     shr: u32,
-    /// Cast a value to a different type, both the value and its `to` type should already be on the stack
+    /// Cast a value to a different type, both the value and its `to` type should alloady be on the stack
     cast: u32,
     /// Import a module and push it on the stack, also pops the module file path from the stack
     import: u32,
@@ -121,19 +118,28 @@ pub const Instruction = union(enum) {
     inline_assembly: InlineAssembly,
     /// Call a function pointer on the stack
     call: Call,
-    /// Declare a variable that is only known at runtime and doesn't get replaced by the compiler, type of this variable should already be
-    /// on top of the stack which have to be popped before `set` instruction is executed
-    variable: Name,
-    /// Same as `variable` but the type is not on the top of the stack, and should be inferred by the semantic analyzer
-    variable_infer: Name,
-    /// Define a constant that is replaced at compile time and acts as a placeholder for a value
-    /// Pops the value from the stack and doesn't need `set` instruction after it unlike `variable` which doesn't pop the value
-    /// and needs `set` instruction after it
-    constant: Name,
-    /// Set a variable with a value on top of the stack
-    set: Name,
-    /// Get a value of a variable
-    get: Name,
+    /// Allocate a local variable with the type provided, and push its pointer on stack
+    alloca: u32,
+    /// Same as `alloca` but the type is inferred by the value on top of the stack
+    alloca_infer: u32,
+    /// Duplicate a value on the stack using an index, or duplicate the top of the stack
+    duplicate: ?u32,
+    /// Reverse the stack into nth depth
+    reverse: u32,
+    /// Same as `reverse` but don't emit air instruction
+    comptime_reverse: u32,
+    /// Pop the stack into nth depth
+    pop: u32,
+    /// Get the value of a global variable
+    get_global_val: Name,
+    // Set the value of a global variable
+    set_global_val: Name,
+    /// Reference a value on the stack
+    /// 1. If the value is a comptime value, it will be hoisted into a global variable and then the pointer of the global variable
+    /// will be on the stack
+    /// 2. If the value is a runtime value, it will be in a local variable and then the pointer of the local variable will be on the stack
+    /// 3. If the previous instruction is a `load` air instruction, it will be removed and the pointer of the value will be on the stack
+    reference: u32,
     /// Should be used before parsing the index of element access (i.e array[index]) or slicing (i.e array[start..end])
     pre_get_element: u32,
     /// Get an element in a "size many" pointer
@@ -272,6 +278,10 @@ pub const Parser = struct {
     target_arch_int_id: u32,
     target_abi_int_id: u32,
 
+    scope: *Scope(Local) = undefined,
+
+    alloca_count: u32 = 0,
+
     defer_blocks_stack: std.ArrayListUnmanaged(u32) = .{},
     scope_defers_count: u32 = 0,
 
@@ -283,6 +293,11 @@ pub const Parser = struct {
     };
 
     pub const Error = error{ WithMessage, WithoutMessage } || std.mem.Allocator.Error;
+
+    pub const Local = struct {
+        is_const: bool,
+        stack_index: u32,
+    };
 
     pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, file: Compilation.File) std.mem.Allocator.Error!Parser {
         var tokens: std.MultiArrayList(Token) = .{};
@@ -343,6 +358,9 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) Error!void {
+        var scope: Scope(Local) = .{};
+        self.scope = &scope;
+
         while (self.tokenTag() != .eof) {
             switch (self.tokenTag()) {
                 .identifier => try self.parseUnit(true),
@@ -400,7 +418,14 @@ pub const Parser = struct {
                             .type_block = type_block,
                         });
                     } else {
-                        return self.sir_instructions.append(self.allocator, .{ .variable = name });
+                        try self.sir_instructions.append(self.allocator, .{ .alloca = name.token_start });
+
+                        self.alloca_count += 1;
+
+                        return self.scope.put(self.allocator, name.buffer, .{
+                            .is_const = false,
+                            .stack_index = self.alloca_count - 1,
+                        });
                     }
                 }
 
@@ -437,8 +462,18 @@ pub const Parser = struct {
                 } else {
                     try self.sir_instructions.appendSlice(self.allocator, &.{
                         .{ .reverse = 2 },
-                        .{ .variable = name },
-                        .{ .set = name },
+                        .{ .alloca = name.token_start },
+                        .{ .duplicate = null },
+                        .{ .reverse = 3 },
+                        .{ .reverse = 2 },
+                        .{ .store = name.token_start },
+                    });
+
+                    self.alloca_count += 1;
+
+                    try self.scope.put(self.allocator, name.buffer, .{
+                        .is_const = false,
+                        .stack_index = self.alloca_count - 1,
                     });
                 }
             },
@@ -470,7 +505,12 @@ pub const Parser = struct {
                         .value_block = value_block,
                     });
                 } else {
-                    try self.sir_instructions.append(self.allocator, .{ .constant = name });
+                    self.alloca_count += 1;
+
+                    try self.scope.put(self.allocator, name.buffer, .{
+                        .is_const = true,
+                        .stack_index = self.alloca_count - 1,
+                    });
                 }
             },
 
@@ -502,8 +542,18 @@ pub const Parser = struct {
                     });
                 } else {
                     try self.sir_instructions.appendSlice(self.allocator, &.{
-                        .{ .variable_infer = name },
-                        .{ .set = name },
+                        .{ .alloca_infer = name.token_start },
+                        .{ .duplicate = null },
+                        .{ .reverse = 3 },
+                        .{ .reverse = 2 },
+                        .{ .store = name.token_start },
+                    });
+
+                    self.alloca_count += 1;
+
+                    try self.scope.put(self.allocator, name.buffer, .{
+                        .is_const = false,
+                        .stack_index = self.alloca_count - 1,
                     });
                 }
             },
@@ -561,7 +611,7 @@ pub const Parser = struct {
                 else => {
                     try self.parseExpr(.lowest);
 
-                    try self.sir_instructions.append(self.allocator, .pop);
+                    try self.sir_instructions.append(self.allocator, .{ .pop = 1 });
                 },
             },
 
@@ -580,7 +630,7 @@ pub const Parser = struct {
             else => {
                 try self.parseExpr(.lowest);
 
-                try self.sir_instructions.append(self.allocator, .pop);
+                try self.sir_instructions.append(self.allocator, .{ .pop = 1 });
             },
         }
 
@@ -948,7 +998,116 @@ pub const Parser = struct {
     }
 
     fn parseIdentifier(self: *Parser) Error!void {
-        try self.sir_instructions.append(self.allocator, .{ .get = try self.parseName() });
+        const name = try self.parseName();
+
+        if (self.scope.get(name.buffer)) |local| {
+            try self.sir_instructions.append(self.allocator, .{ .duplicate = local.stack_index });
+
+            if (!local.is_const) {
+                try self.sir_instructions.append(self.allocator, .{ .load = name.token_start });
+            }
+        } else {
+            const c_char_bits = self.compilation.env.target.cTypeBitSize(.char);
+
+            {
+                const c_char_type_instruction: Instruction = .{
+                    .int_type = .{
+                        .signedness = if (self.compilation.env.target.charSignedness() == .signed) .signed else .unsigned,
+                        .bits = c_char_bits,
+                    },
+                };
+
+                inline for (.{ "void", "bool", "c_char" }, .{ .void_type, .bool_type, c_char_type_instruction }) |type_name, instruction| {
+                    if (std.mem.eql(u8, name.buffer, type_name)) {
+                        return self.sir_instructions.append(self.allocator, instruction);
+                    }
+                }
+            }
+
+            {
+                const c_short_bits = self.compilation.env.target.cTypeBitSize(.short);
+                const c_ushort_bits = self.compilation.env.target.cTypeBitSize(.ushort);
+                const c_int_bits = self.compilation.env.target.cTypeBitSize(.int);
+                const c_uint_bits = self.compilation.env.target.cTypeBitSize(.uint);
+                const c_long_bits = self.compilation.env.target.cTypeBitSize(.long);
+                const c_ulong_bits = self.compilation.env.target.cTypeBitSize(.ulong);
+                const c_longlong_bits = self.compilation.env.target.cTypeBitSize(.longlong);
+                const c_ulonglong_bits = self.compilation.env.target.cTypeBitSize(.ulonglong);
+                const ptr_bits = self.compilation.env.target.ptrBitWidth();
+
+                inline for (.{ "c_uchar", "c_ushort", "c_uint", "c_ulong", "c_ulonglong", "usize" }, .{ c_char_bits, c_ushort_bits, c_uint_bits, c_ulong_bits, c_ulonglong_bits, ptr_bits }) |type_name, bits| {
+                    if (std.mem.eql(u8, name.buffer, type_name)) {
+                        return self.sir_instructions.append(self.allocator, .{
+                            .int_type = .{
+                                .signedness = .unsigned,
+                                .bits = @intCast(bits),
+                            },
+                        });
+                    }
+                }
+
+                inline for (.{ "c_schar", "c_short", "c_int", "c_long", "c_longlong", "ssize" }, .{ c_char_bits, c_short_bits, c_int_bits, c_long_bits, c_longlong_bits, ptr_bits }) |type_name, bits| {
+                    if (std.mem.eql(u8, name.buffer, type_name)) {
+                        return self.sir_instructions.append(self.allocator, .{
+                            .int_type = .{
+                                .signedness = .signed,
+                                .bits = @intCast(bits),
+                            },
+                        });
+                    }
+                }
+
+                {
+                    const c_float_bits = self.compilation.env.target.cTypeBitSize(.float);
+                    const c_double_bits = self.compilation.env.target.cTypeBitSize(.double);
+                    // TODO: Type `c_longdouble` requires `f80` and `f128` to be supported.
+
+                    inline for (.{ "f16", "f32", "f64", "c_float", "c_double" }, .{ 16, 32, 64, c_float_bits, c_double_bits }) |type_name, bits| {
+                        if (std.mem.eql(u8, name.buffer, type_name)) {
+                            return self.sir_instructions.append(self.allocator, .{
+                                .float_type = .{
+                                    .bits = @intCast(bits),
+                                },
+                            });
+                        }
+                    }
+                }
+
+                {
+                    inline for (.{ "true", "false" }, .{ true, false }) |boolean_name, boolean_value| {
+                        if (std.mem.eql(u8, name.buffer, boolean_name)) {
+                            return self.sir_instructions.append(self.allocator, .{
+                                .boolean = boolean_value,
+                            });
+                        }
+                    }
+                }
+
+                if (name.buffer.len > 1) {
+                    if (std.mem.startsWith(u8, name.buffer, "u")) {
+                        if (std.fmt.parseInt(u16, name.buffer[1..], 10) catch null) |bits| {
+                            return self.sir_instructions.append(self.allocator, .{
+                                .int_type = .{
+                                    .signedness = .unsigned,
+                                    .bits = @intCast(bits),
+                                },
+                            });
+                        }
+                    } else if (std.mem.startsWith(u8, name.buffer, "s")) {
+                        if (std.fmt.parseInt(u16, name.buffer[1..], 10) catch null) |bits| {
+                            return self.sir_instructions.append(self.allocator, .{
+                                .int_type = .{
+                                    .signedness = .signed,
+                                    .bits = @intCast(bits),
+                                },
+                            });
+                        }
+                    }
+                }
+
+                try self.sir_instructions.append(self.allocator, .{ .get_global_val = name });
+            }
+        }
     }
 
     fn parseSpecialIdentifier(self: *Parser) Error!void {
@@ -1345,7 +1504,7 @@ pub const Parser = struct {
         if (self.tokenTag() != .special_identifier and self.tokenTag() != .open_brace) {
             try self.parseExpr(.lowest);
         } else {
-            try self.sir_instructions.append(self.allocator, .{ .get = .{ .buffer = "void", .token_start = 0 } });
+            try self.sir_instructions.append(self.allocator, .void_type);
         }
 
         var maybe_foreign: ?Range = null;
@@ -1440,14 +1599,36 @@ pub const Parser = struct {
             var body_instructions: std.ArrayListUnmanaged(Instruction) = .{};
             self.sir_instructions = &body_instructions;
 
-            try body_instructions.append(self.allocator, .{ .parameters = parameters.items });
+            const previous_scope = self.scope;
 
-            try self.parseStmtsBlockInstructions();
+            var scope: Scope(Local) = .{};
+            self.scope = &scope;
 
-            const last_instruction = body_instructions.getLast();
+            const previous_alloca_count = self.alloca_count;
+            self.alloca_count = 0;
 
-            if (last_instruction != .ret and last_instruction != .ret_void)
+            try body_instructions.ensureUnusedCapacity(self.allocator, parameters.items.len);
+            try self.scope.ensureUnusedCapacity(self.allocator, @intCast(parameters.items.len));
+
+            for (parameters.items, 0..) |name, i| {
+                body_instructions.appendAssumeCapacity(.{ .parameter = @intCast(i) });
+
+                self.scope.putAssumeCapacity(name.buffer, .{
+                    .is_const = true,
+                    .stack_index = @intCast(i),
+                });
+            }
+
+            self.alloca_count += @intCast(parameters.items.len);
+
+            const returned = try self.parseStmtsBlockInstructions();
+
+            self.alloca_count = previous_alloca_count;
+
+            if (!returned)
                 try body_instructions.append(self.allocator, .{ .ret_void = fn_keyword_start });
+
+            self.scope = previous_scope;
 
             try self.sir.blocks.append(self.allocator, body_instructions);
 
@@ -1807,8 +1988,8 @@ pub const Parser = struct {
                             self.allocator,
                             &.{
                                 .{ .reverse = 2 },
-                                .duplicate,
-                                .{ .read = operator_start },
+                                .{ .duplicate = null },
+                                .{ .load = operator_start },
                                 .{ .reverse = 2 },
                                 .{ .reverse = 3 },
                             },
@@ -1820,12 +2001,12 @@ pub const Parser = struct {
                     try self.sir_instructions.appendSlice(
                         self.allocator,
                         &.{
-                            .duplicate,
+                            .{ .duplicate = null },
                             .{ .reverse = 3 },
-                            .{ .write = operator_start },
+                            .{ .store = operator_start },
                         },
                     );
-                } else if (last_instruction == .read) {
+                } else if (last_instruction == .load) {
                     try self.parseExpr(precedence);
 
                     if (maybe_additional_operator) |additional_operator_token| {
@@ -1833,8 +2014,8 @@ pub const Parser = struct {
                             self.allocator,
                             &.{
                                 .{ .reverse = 2 },
-                                .duplicate,
-                                .{ .read = operator_start },
+                                .{ .duplicate = null },
+                                .{ .load = operator_start },
                                 .{ .reverse = 2 },
                                 .{ .reverse = 3 },
                             },
@@ -1846,12 +2027,12 @@ pub const Parser = struct {
                     try self.sir_instructions.appendSlice(
                         self.allocator,
                         &.{
-                            .duplicate,
+                            .{ .duplicate = null },
                             .{ .reverse = 3 },
-                            .{ .write = operator_start },
+                            .{ .store = operator_start },
                         },
                     );
-                } else if (last_instruction == .get) {
+                } else if (last_instruction == .get_global_val) {
                     try self.parseExpr(precedence);
 
                     if (maybe_additional_operator) |additional_operator_token| {
@@ -1869,8 +2050,8 @@ pub const Parser = struct {
                     try self.sir_instructions.appendSlice(
                         self.allocator,
                         &.{
-                            .duplicate,
-                            .{ .set = last_instruction.get },
+                            .{ .duplicate = null },
+                            .{ .set_global_val = last_instruction.get_global_val },
                         },
                     );
                 } else {
@@ -1999,7 +2180,7 @@ pub const Parser = struct {
         self.advance();
 
         if (self.eat(.star)) {
-            try self.sir_instructions.append(self.allocator, .{ .read = period_start });
+            try self.sir_instructions.append(self.allocator, .{ .load = period_start });
         } else {
             const name = try self.parseName();
 
@@ -2042,16 +2223,21 @@ pub const Parser = struct {
         var block_instructions: std.ArrayListUnmanaged(Instruction) = .{};
         self.sir_instructions = &block_instructions;
 
-        try self.parseStmtsBlockInstructions();
+        _ = try self.parseStmtsBlockInstructions();
 
         try self.sir.blocks.append(self.allocator, block_instructions);
 
         return @intCast(self.sir.blocks.items.len - 1);
     }
 
-    fn parseStmtsBlockInstructions(self: *Parser) Error!void {
-        const previous_scope_defer_count = self.scope_defers_count;
+    fn parseStmtsBlockInstructions(self: *Parser) Error!bool {
+        var scope: Scope(Local) = .{ .maybe_parent = self.scope };
+        self.scope = &scope;
+
+        const previous_scope_defers_count = self.scope_defers_count;
         self.scope_defers_count = 0;
+
+        const previous_alloca_count = self.alloca_count;
 
         if (!self.eat(.open_brace)) {
             self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
@@ -2069,9 +2255,20 @@ pub const Parser = struct {
             }
         }
 
+        const returned = self.sir_instructions.items.len > 0 and
+            (self.sir_instructions.getLast() == .ret or self.sir_instructions.getLast() == .ret_void);
+
         try self.popScopeDefers();
 
-        self.scope_defers_count = previous_scope_defer_count;
+        self.scope_defers_count = previous_scope_defers_count;
+
+        try self.sir_instructions.append(self.allocator, .{ .pop = self.alloca_count - previous_alloca_count });
+
+        self.alloca_count = previous_alloca_count;
+
+        self.scope = self.scope.maybe_parent.?;
+
+        return returned;
     }
 
     fn reportRedeclaration(self: *Parser, name: Name) Error!noreturn {

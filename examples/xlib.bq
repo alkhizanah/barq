@@ -10,7 +10,7 @@
 std :: @import("std");
 
 main :: fn () u8 @foreign("main") {
-    display := XOpenDisplay(0 as [*]const u8);
+    display :: XOpenDisplay(0 as [*]const u8);
 
     if display as usize == 0 {
         std.c.printf("failed to open display\n");
@@ -18,9 +18,9 @@ main :: fn () u8 @foreign("main") {
         return 1;
     }
 
-    root := XDefaultRootWindow(display);
-    screen := XDefaultScreen(display);
-    gc := XDefaultGC(display, screen);
+    root :: XDefaultRootWindow(display);
+    screen :: XDefaultScreen(display);
+    gc :: XDefaultGC(display, screen);
 
     x : c_int = 0;
     y : c_int = 0;
@@ -29,7 +29,9 @@ main :: fn () u8 @foreign("main") {
     border_width : c_uint = 0;
     depth : c_uint;
 
-    window := XCreateSimpleWindow(display, XDefaultRootWindow(display), x, y, width, height, border_width, 0, XBlackPixel(display, screen));
+    black_pixel :: XBlackPixel(display, screen);
+
+    window :: XCreateSimpleWindow(display, root, x, y, width, height, border_width, 0, black_pixel);
 
     XMapWindow(display, window);
 
@@ -41,7 +43,7 @@ main :: fn () u8 @foreign("main") {
         XSetForeground(display, gc, (std.c.rand() % 0xFFFFFF) as c_ulong);
 
         i : u16 = 0;
-        
+
         while (i < 255 * 2) {
             XDrawPoint(display, window, gc, std.c.rand() % width as c_int, std.c.rand() % height as c_int);
 

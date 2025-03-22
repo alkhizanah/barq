@@ -35,7 +35,7 @@ pub const Pool = struct {
     pub const Module = struct {
         file: File,
         sir: Sir,
-        scope: *Sema.Scope,
+        globals: *Sema.Globals,
     };
 
     pub const LazyUnit = struct {

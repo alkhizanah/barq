@@ -108,12 +108,10 @@ main :: fn () {
 }
 
 exit :: std.process.exit;
-
-printfd :: std.io.printfd;
+printfd :: std.fs.write;
 print :: std.io.print;
 println :: std.io.println;
 eprintln :: std.io.eprintln;
-
 socket :: std.os.linux.socket;
 bind :: std.os.linux.bind;
 read :: std.os.linux.read;

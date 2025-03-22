@@ -29,17 +29,15 @@ builder: c.LLVMBuilderRef,
 function_value: c.LLVMValueRef = undefined,
 function_type: Type.Function = undefined,
 
-strings: std.StringHashMapUnmanaged(c.LLVMValueRef) = .{},
-
 stack: std.ArrayListUnmanaged(Register) = .{},
 
-scope: *Scope = undefined,
+globals: Globals = .{},
 
 pub const Error = std.mem.Allocator.Error;
 
-const Scope = Symbol.Scope(Variable);
+const Globals = std.StringHashMapUnmanaged(Global);
 
-const Variable = struct {
+const Global = struct {
     type_id: u32,
     pointer: c.LLVMValueRef,
 };
@@ -51,7 +49,11 @@ const Register = struct {
 
 pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, air: Air) Error!LlvmBackend {
     const context = c.LLVMContextCreate();
-    const module = c.LLVMModuleCreateWithNameInContext(try allocator.dupeZ(u8, compilation.root_file.path), context);
+
+    const module_name_z = try allocator.dupeZ(u8, compilation.root_file.path);
+    const module = c.LLVMModuleCreateWithNameInContext(module_name_z, context);
+    allocator.free(module_name_z);
+
     const builder = c.LLVMCreateBuilderInContext(context);
 
     return LlvmBackend{
@@ -65,7 +67,8 @@ pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, air: Air) E
 }
 
 pub fn deinit(self: *LlvmBackend) void {
-    self.strings.deinit(self.allocator);
+    c.LLVMDumpModule(self.module);
+
     self.stack.deinit(self.allocator);
 
     c.LLVMDisposeModule(self.module);
@@ -81,22 +84,20 @@ pub fn emit(
     code_model: root.CodeModel,
     optimization_mode: root.OptimizationMode,
 ) Error!void {
+    try self.stack.ensureTotalCapacity(self.allocator, 255);
+
     c.LLVMSetModuleInlineAsm2(self.module, self.air.global_assembly.items.ptr, self.air.global_assembly.items.len);
 
-    var global_scope: Scope = .{};
-    self.scope = &global_scope;
-
-    try self.scope.ensureUnusedCapacity(self.allocator, @intCast(self.air.variables.count() + self.air.functions.count()));
+    try self.globals.ensureUnusedCapacity(self.allocator, @intCast(self.air.variables.count() + self.air.functions.count()));
 
     for (self.air.variables.keys(), self.air.variables.values()) |variable_name, variable| {
-        const variable_name_z = try self.allocator.dupeZ(u8, variable_name);
-        defer self.allocator.free(variable_name_z);
-
         const variable_type = self.compilation.getTypeFromId(variable.type_id);
 
         const llvm_type = try self.llvmType(variable_type);
 
-        const llvm_pointer = c.LLVMAddGlobal(self.module, llvm_type, variable_name_z.ptr);
+        const variable_name_z = try self.allocator.dupeZ(u8, variable_name);
+        const llvm_pointer = c.LLVMAddGlobal(self.module, llvm_type, variable_name_z);
+        self.allocator.free(variable_name_z);
 
         if (variable.initializer) |initializer| {
             try self.emitInstruction(initializer);
@@ -106,25 +107,26 @@ pub fn emit(
             try self.unaryImplicitCast(&initializer_register, variable.type_id);
 
             _ = c.LLVMSetInitializer(llvm_pointer, initializer_register.value);
+
+            self.stack.clearRetainingCapacity();
         } else {
             _ = c.LLVMSetInitializer(llvm_pointer, c.LLVMGetUndef(llvm_type));
         }
 
-        self.scope.putAssumeCapacity(variable_name, .{
+        self.globals.putAssumeCapacity(variable_name, .{
             .type_id = variable.type_id,
             .pointer = llvm_pointer,
         });
     }
 
     for (self.air.functions.keys(), self.air.functions.values()) |function_name, function| {
-        const function_name_z = try self.allocator.dupeZ(u8, function_name);
-        defer self.allocator.free(function_name_z);
-
         const function_type = self.compilation.getTypeFromId(function.type_id);
 
         const llvm_type = try self.llvmType(function_type);
 
-        const llvm_pointer = c.LLVMAddFunction(self.module, function_name_z.ptr, llvm_type);
+        const function_name_z = try self.allocator.dupeZ(u8, function_name);
+        const llvm_pointer = c.LLVMAddFunction(self.module, function_name_z, llvm_type);
+        self.allocator.free(function_name_z);
 
         switch (function_type.function.calling_convention) {
             .auto => {
@@ -148,14 +150,14 @@ pub fn emit(
             ),
         }
 
-        self.scope.putAssumeCapacity(function_name, .{
+        self.globals.putAssumeCapacity(function_name, .{
             .type_id = function.type_id,
             .pointer = llvm_pointer,
         });
     }
 
     for (self.air.functions.keys(), self.air.functions.values()) |function_name, function| {
-        const llvm_pointer = self.scope.get(function_name).?.pointer;
+        const llvm_pointer = self.globals.get(function_name).?.pointer;
 
         const function_type = self.compilation.getTypeFromId(function.type_id);
 
@@ -168,6 +170,8 @@ pub fn emit(
             c.LLVMPositionBuilderAtEnd(self.builder, llvm_entry_block);
 
             _ = try self.emitBlock(body_block);
+
+            self.stack.clearRetainingCapacity();
         }
     }
 
@@ -251,9 +255,12 @@ pub fn emit(
 
 fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!void {
     switch (air_instruction) {
-        .duplicate => try self.stack.append(self.allocator, self.stack.getLast()),
+        .duplicate => |maybe_stack_index| try self.stack.append(
+            self.allocator,
+            if (maybe_stack_index) |stack_index| self.stack.items[stack_index] else self.stack.getLast(),
+        ),
         .reverse => |count| std.mem.reverse(Register, self.stack.items[self.stack.items.len - count ..]),
-        .pop => _ = self.stack.pop(),
+        .pop => |count| self.stack.shrinkRetainingCapacity(self.stack.items.len - count),
 
         .string => |string| try self.emitString(string),
         .int => |int| try self.emitInt(int),
@@ -268,8 +275,8 @@ fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!v
         .bit_or => try self.emitBitwiseArithmetic(.bit_or),
         .bit_xor => try self.emitBitwiseArithmetic(.bit_xor),
 
-        .write => try self.emitWrite(),
-        .read => try self.emitRead(),
+        .store => try self.emitStore(),
+        .load => try self.emitLoad(),
 
         .add => try self.emitArithmetic(.add),
         .sub => try self.emitArithmetic(.sub),
@@ -290,12 +297,14 @@ fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!v
 
         .call => |arguments_count| try self.emitCall(arguments_count),
 
-        .parameters => |names| try self.emitParameters(names),
+        .parameter => |index| try self.emitParameter(index),
 
-        .variable => |variable| try self.emitVariable(variable),
+        .alloca => |type_id| try self.emitAlloca(type_id),
 
-        .get_variable_ptr => |name| try self.emitGetVariablePtr(name),
+        .get_global_ptr => |name| try self.emitGetGlobalPtr(name),
         .get_element_ptr => try self.emitGetElementPtr(),
+
+        .extract_field => |field_index| try self.emitExtrcatField(field_index),
         .get_field_ptr => |field_index| try self.emitGetFieldPtr(field_index),
 
         .slice => try self.emitSlice(),
@@ -317,20 +326,11 @@ fn emitString(self: *LlvmBackend, range: Range) Error!void {
 
     const string_type_id = try self.compilation.putType(try self.compilation.makeStringType(string.len));
 
-    if (self.strings.get(string)) |string_pointer| {
-        try self.stack.append(self.allocator, .{ .value = string_pointer, .type_id = string_type_id });
-    } else {
-        const string_pointer =
-            c.LLVMBuildGlobalStringPtr(
-            self.builder,
-            try self.allocator.dupeZ(u8, string),
-            "",
-        );
+    const string_z = try self.allocator.dupeZ(u8, string);
+    const string_pointer = c.LLVMBuildGlobalStringPtr(self.builder, string_z, "");
+    self.allocator.free(string_z);
 
-        try self.strings.put(self.allocator, string, string_pointer);
-
-        try self.stack.append(self.allocator, .{ .value = string_pointer, .type_id = string_type_id });
-    }
+    try self.stack.append(self.allocator, .{ .value = string_pointer, .type_id = string_type_id });
 }
 
 fn emitInt(self: *LlvmBackend, id: u32) Error!void {
@@ -406,7 +406,7 @@ fn emitBitwiseArithmetic(self: *LlvmBackend, comptime operation: BitwiseArithmet
     );
 }
 
-fn emitWrite(self: *LlvmBackend) Error!void {
+fn emitStore(self: *LlvmBackend) Error!void {
     const pointer = self.stack.pop();
 
     const pointer_type = self.compilation.getTypeFromId(pointer.type_id).pointer;
@@ -419,7 +419,7 @@ fn emitWrite(self: *LlvmBackend) Error!void {
     _ = c.LLVMBuildStore(self.builder, register.value, pointer.value);
 }
 
-fn emitRead(self: *LlvmBackend) Error!void {
+fn emitLoad(self: *LlvmBackend) Error!void {
     const pointer = self.stack.pop();
 
     const pointer_type = self.compilation.getTypeFromId(pointer.type_id).pointer;
@@ -450,7 +450,7 @@ fn emitGetElementPtr(self: *LlvmBackend) Error!void {
     const array_pointer = self.stack.pop();
     const array_pointer_type = self.compilation.getTypeFromId(array_pointer.type_id).pointer;
 
-    const child_type_id = if (array_pointer_type.size == .one)
+    const child_type_id = if (self.compilation.getTypeFromId(array_pointer_type.child_type_id) == .array)
         self.compilation.getTypeFromId(array_pointer_type.child_type_id).array.child_type_id
     else
         array_pointer_type.child_type_id;
@@ -489,42 +489,30 @@ fn emitGetFieldPtr(self: *LlvmBackend, field_index: u32) Error!void {
     const container_type = self.compilation.getTypeFromId(self.compilation.getTypeFromId(container.type_id).pointer.child_type_id);
     const llvm_container_type = try self.llvmType(container_type);
 
-    var field_type_id: u32 = undefined;
-
-    switch (container_type) {
-        .pointer => |pointer_type| {
-            std.debug.assert(pointer_type.size == .slice);
-
-            switch (field_index) {
-                0 => {
-                    field_type_id = try self.compilation.putType(.{
-                        .int = .{
-                            .signedness = .unsigned,
-                            .bits = self.compilation.env.target.ptrBitWidth(),
-                        },
-                    });
+    const field_type_id = switch (container_type) {
+        .pointer => |pointer_type| switch (field_index) {
+            0 => try self.compilation.putType(.{
+                .int = .{
+                    .signedness = .unsigned,
+                    .bits = self.compilation.env.target.ptrBitWidth(),
                 },
+            }),
 
-                1 => {
-                    field_type_id = try self.compilation.putType(.{
-                        .pointer = .{
-                            .size = .many,
-                            .is_const = pointer_type.is_const,
-                            .child_type_id = pointer_type.child_type_id,
-                        },
-                    });
+            1 => try self.compilation.putType(.{
+                .pointer = .{
+                    .size = .many,
+                    .is_const = pointer_type.is_const,
+                    .child_type_id = pointer_type.child_type_id,
                 },
+            }),
 
-                else => unreachable,
-            }
+            else => unreachable,
         },
 
-        .@"struct" => |struct_type| {
-            field_type_id = struct_type.fields[field_index].type_id;
-        },
+        .@"struct" => |struct_type| struct_type.fields[field_index].type_id,
 
         else => unreachable,
-    }
+    };
 
     try self.stack.append(
         self.allocator,
@@ -548,6 +536,50 @@ fn emitGetFieldPtr(self: *LlvmBackend, field_index: u32) Error!void {
     );
 }
 
+fn emitExtrcatField(self: *LlvmBackend, field_index: u32) Error!void {
+    const container = self.stack.pop();
+    const container_type = self.compilation.getTypeFromId(container.type_id);
+
+    const field_type_id = switch (container_type) {
+        .pointer => |pointer_type| switch (field_index) {
+            0 => try self.compilation.putType(.{
+                .int = .{
+                    .signedness = .unsigned,
+                    .bits = self.compilation.env.target.ptrBitWidth(),
+                },
+            }),
+
+            1 => try self.compilation.putType(.{
+                .pointer = .{
+                    .size = .many,
+                    .is_const = pointer_type.is_const,
+                    .child_type_id = pointer_type.child_type_id,
+                },
+            }),
+
+            else => unreachable,
+        },
+
+        .@"struct" => |struct_type| struct_type.fields[field_index].type_id,
+
+        else => unreachable,
+    };
+
+    try self.stack.append(
+        self.allocator,
+        .{
+            .type_id = field_type_id,
+
+            .value = c.LLVMBuildExtractValue(
+                self.builder,
+                container.value,
+                @intCast(field_index),
+                "",
+            ),
+        },
+    );
+}
+
 fn emitSlice(self: *LlvmBackend) Error!void {
     var end = self.stack.pop();
     var start = self.stack.pop();
@@ -561,7 +593,7 @@ fn emitSlice(self: *LlvmBackend) Error!void {
     const array_pointer = self.stack.pop();
     const array_pointer_type = self.compilation.getTypeFromId(array_pointer.type_id).pointer;
 
-    const child_type_id = if (array_pointer_type.size == .one)
+    const child_type_id = if (self.compilation.getTypeFromId(array_pointer_type.child_type_id) == .array)
         self.compilation.getTypeFromId(array_pointer_type.child_type_id).array.child_type_id
     else
         array_pointer_type.child_type_id;
@@ -844,9 +876,11 @@ fn emitInlineAssembly(self: *LlvmBackend, assembly: Air.Instruction.InlineAssemb
 
     const assembly_function_type = c.LLVMFunctionType(assmebly_return_type, assembly_parameter_types.ptr, @intCast(assembly_parameter_types.len), 0);
 
+    const assembly_content_z = try self.allocator.dupeZ(u8, assembly.content);
+
     const assembly_function = c.LLVMGetInlineAsm(
         assembly_function_type,
-        try self.allocator.dupeZ(u8, assembly.content),
+        assembly_content_z,
         assembly.content.len,
         assembly_constraints.items.ptr,
         assembly_constraints.items.len,
@@ -855,6 +889,8 @@ fn emitInlineAssembly(self: *LlvmBackend, assembly: Air.Instruction.InlineAssemb
         c.LLVMInlineAsmDialectATT,
         0,
     );
+
+    self.allocator.free(assembly_content_z);
 
     const assembly_output = c.LLVMBuildCall2(
         self.builder,
@@ -910,32 +946,14 @@ fn emitCall(self: *LlvmBackend, arguments_count: usize) Error!void {
     }
 }
 
-fn emitParameters(self: *LlvmBackend, names: [][]const u8) Error!void {
-    try self.scope.ensureTotalCapacity(self.allocator, @intCast(names.len));
-
-    for (names, 0..) |name, i| {
-        const parameter_type_id = self.function_type.parameter_type_ids[i];
-
-        const parameter_type = self.compilation.getTypeFromId(parameter_type_id);
-
-        const llvm_type = try self.llvmType(parameter_type);
-
-        const llvm_pointer = c.LLVMBuildAlloca(self.builder, llvm_type, "");
-
-        _ = c.LLVMBuildStore(self.builder, c.LLVMGetParam(self.function_value, @intCast(i)), llvm_pointer);
-
-        self.scope.putAssumeCapacity(name, .{
-            .type_id = parameter_type_id,
-            .pointer = llvm_pointer,
-        });
-    }
-
-    self.allocator.free(names);
+fn emitParameter(self: *LlvmBackend, index: u32) Error!void {
+    try self.stack.append(self.allocator, .{
+        .type_id = self.function_type.parameter_type_ids[index],
+        .value = c.LLVMGetParam(self.function_value, index),
+    });
 }
 
-fn emitVariable(self: *LlvmBackend, variable: struct { []const u8, u32 }) Error!void {
-    const name, const type_id = variable;
-
+fn emitAlloca(self: *LlvmBackend, type_id: u32) Error!void {
     const @"type" = self.compilation.getTypeFromId(type_id);
 
     const llvm_type = try self.llvmType(@"type");
@@ -953,14 +971,21 @@ fn emitVariable(self: *LlvmBackend, variable: struct { []const u8, u32 }) Error!
 
     c.LLVMPositionBuilderAtEnd(self.builder, current_block);
 
-    try self.scope.put(self.allocator, name, .{
-        .type_id = type_id,
-        .pointer = llvm_pointer,
+    try self.stack.append(self.allocator, .{
+        .type_id = try self.compilation.putType(.{
+            .pointer = .{
+                .size = .one,
+                .is_const = false,
+                .child_type_id = type_id,
+            },
+        }),
+
+        .value = llvm_pointer,
     });
 }
 
-fn emitGetVariablePtr(self: *LlvmBackend, name: []const u8) Error!void {
-    const variable = self.scope.get(name).?;
+fn emitGetGlobalPtr(self: *LlvmBackend, name: []const u8) Error!void {
+    const global = self.globals.get(name).?;
 
     try self.stack.append(
         self.allocator,
@@ -969,25 +994,20 @@ fn emitGetVariablePtr(self: *LlvmBackend, name: []const u8) Error!void {
                 .pointer = .{
                     .size = .one,
                     .is_const = false,
-                    .child_type_id = variable.type_id,
+                    .child_type_id = global.type_id,
                 },
             }),
 
-            .value = variable.pointer,
+            .value = global.pointer,
         },
     );
 }
 
 fn emitBlock(self: *LlvmBackend, id: u32) Error!void {
-    var scope: Scope = .{ .maybe_parent = self.scope };
-    self.scope = &scope;
-
     const instructions = self.air.blocks.items[id].items;
 
     for (instructions) |instruction|
         try self.emitInstruction(instruction);
-
-    self.scope = self.scope.maybe_parent.?;
 }
 
 var llvm_loop_condition_block: c.LLVMBasicBlockRef = null;
@@ -1064,13 +1084,11 @@ fn emitConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditional)
 
     c.LLVMPositionBuilderAtEnd(self.builder, llvm_then_block);
 
-    const previous_stack = self.stack;
-
-    self.stack = .{};
+    const previous_stack_len = self.stack.items.len;
 
     try self.emitBlock(conditional.then_block);
 
-    const maybe_then_value = self.stack.popOrNull();
+    const maybe_then_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
 
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
         _ = c.LLVMBuildBr(self.builder, llvm_continue_block);
@@ -1078,14 +1096,10 @@ fn emitConditional(self: *LlvmBackend, conditional: Air.Instruction.Conditional)
 
     c.LLVMPositionBuilderAtEnd(self.builder, llvm_else_block);
 
-    self.stack = .{};
-
     if (conditional.else_block) |else_block|
         try self.emitBlock(else_block);
 
-    const maybe_else_value = self.stack.popOrNull();
-
-    self.stack = previous_stack;
+    const maybe_else_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
 
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
         _ = c.LLVMBuildBr(self.builder, llvm_continue_block);
@@ -1123,6 +1137,12 @@ fn emitSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!void 
 
     const switched_on_register = self.stack.pop();
 
+    const switch_case_values = try self.allocator.alloc(Register, @"switch".case_blocks.len);
+
+    for (switch_case_values) |*case_value| {
+        case_value.* = self.stack.pop();
+    }
+
     const llvm_else_block = c.LLVMAppendBasicBlockInContext(self.context, self.function_value, "");
     const llvm_continue_block = c.LLVMCreateBasicBlockInContext(self.context, "");
 
@@ -1143,15 +1163,15 @@ fn emitSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!void 
     var maybe_result_type_id: ?u32 = null;
 
     {
-        const previous_stack = self.stack;
-
-        self.stack = .{};
+        const previous_stack_len = self.stack.items.len;
 
         c.LLVMPositionBuilderAtEnd(self.builder, llvm_else_block);
 
         try self.emitBlock(@"switch".else_block);
 
-        if (self.stack.popOrNull()) |else_value| {
+        if (self.stack.items.len > previous_stack_len) {
+            const else_value = self.stack.pop();
+
             try llvm_incoming_phi_entries.append(self.allocator, .{
                 .value = else_value.value,
                 .block = llvm_else_block,
@@ -1159,37 +1179,31 @@ fn emitSwitch(self: *LlvmBackend, @"switch": Air.Instruction.Switch) Error!void 
 
             maybe_result_type_id = else_value.type_id;
         }
-
-        self.stack = previous_stack;
     }
 
     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
         _ = c.LLVMBuildBr(self.builder, llvm_continue_block);
     }
 
-    for (@"switch".case_blocks) |case_block| {
-        var case_value = self.stack.pop();
-
-        try self.unaryImplicitCast(&case_value, switched_on_register.type_id);
+    for (switch_case_values, @"switch".case_blocks) |*case_value, case_block| {
+        try self.unaryImplicitCast(case_value, switched_on_register.type_id);
 
         const llvm_case_block = c.LLVMAppendBasicBlockInContext(self.context, self.function_value, "");
 
-        const previous_stack = self.stack;
-
-        self.stack = .{};
+        const previous_stack_len = self.stack.items.len;
 
         c.LLVMPositionBuilderAtEnd(self.builder, llvm_case_block);
 
         try self.emitBlock(case_block);
 
-        if (self.stack.popOrNull()) |case_result_value| {
+        if (self.stack.items.len > previous_stack_len) {
+            const case_result_value = self.stack.pop();
+
             try llvm_incoming_phi_entries.append(self.allocator, .{
                 .value = case_result_value.value,
                 .block = llvm_case_block,
             });
         }
-
-        self.stack = previous_stack;
 
         if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
             _ = c.LLVMBuildBr(self.builder, llvm_continue_block);
@@ -1611,32 +1625,13 @@ fn saneFloatCast(self: *LlvmBackend, lhs: Register, to: Type) Error!c.LLVMValueR
 fn makeSlice(self: *LlvmBackend, slice_type: c.LLVMTypeRef, ptr: c.LLVMValueRef, len: c.LLVMValueRef) Error!c.LLVMValueRef {
     if (c.LLVMIsConstant(ptr) == 1 and c.LLVMIsConstant(len) == 1) {
         var slice_values: [2]c.LLVMValueRef = .{ len, ptr };
-
         return c.LLVMConstStructInContext(self.context, &slice_values, 2, 0);
+    } else {
+        var slice = c.LLVMGetUndef(slice_type);
+        slice = c.LLVMBuildInsertValue(self.builder, slice, len, 0, "");
+        slice = c.LLVMBuildInsertValue(self.builder, slice, ptr, 1, "");
+        return slice;
     }
-
-    const current_block = c.LLVMGetInsertBlock(self.builder);
-    const first_block = c.LLVMGetFirstBasicBlock(self.function_value);
-    const first_instruction = c.LLVMGetFirstInstruction(first_block);
-
-    if (first_instruction != null)
-        c.LLVMPositionBuilderBefore(self.builder, first_instruction)
-    else
-        c.LLVMPositionBuilderAtEnd(self.builder, first_block);
-
-    const slice_pointer = c.LLVMBuildAlloca(self.builder, slice_type, "");
-
-    c.LLVMPositionBuilderAtEnd(self.builder, current_block);
-
-    const len_in_slice = c.LLVMBuildStructGEP2(self.builder, slice_type, slice_pointer, 0, "");
-
-    _ = c.LLVMBuildStore(self.builder, len, len_in_slice);
-
-    const ptr_in_slice = c.LLVMBuildStructGEP2(self.builder, slice_type, slice_pointer, 1, "");
-
-    _ = c.LLVMBuildStore(self.builder, ptr, ptr_in_slice);
-
-    return c.LLVMBuildLoad2(self.builder, slice_type, slice_pointer, "");
 }
 
 fn unaryImplicitCast(self: *LlvmBackend, lhs: *Register, to_type_id: u32) Error!void {
@@ -1653,7 +1648,9 @@ fn unaryImplicitCast(self: *LlvmBackend, lhs: *Register, to_type_id: u32) Error!
         lhs.value = try self.saneIntCast(lhs.*, to_type);
     } else if (to_type == .float) {
         lhs.value = try self.saneFloatCast(lhs.*, to_type);
-    } else if (to_type == .pointer and to_type.pointer.size == .slice) {
+    } else if (lhs_type == .pointer and to_type == .pointer and to_type.pointer.size == .slice and
+        self.compilation.getTypeFromId(lhs_type.pointer.child_type_id) == .array)
+    {
         const len = self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_type.pointer.child_type_id).array.len_int_id);
 
         const llvm_usize_type = c.LLVMIntTypeInContext(self.context, self.compilation.env.target.ptrBitWidth());

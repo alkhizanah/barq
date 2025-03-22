@@ -4,7 +4,7 @@ print_entire_file :: fn (handle : Handle) {
     chunk : [1024]u8;
 
     while true {
-        n := (&read(handle, &chunk) as *s32).*;
+        n :: (&read(handle, &chunk) as *s32).*;
 
         if n > 0 {
             print(chunk[0..(n as usize)]);
@@ -20,7 +20,7 @@ print_entire_file :: fn (handle : Handle) {
 }
 
 print_stdin_loop :: fn () {
-    stdin := get_stdin_handle();
+    stdin :: get_stdin_handle();
 
     while true {
         print_entire_file(stdin);
@@ -47,7 +47,7 @@ print_concatenated_files :: fn (paths : [][*]const u8) {
 }
 
 main :: fn () {
-    args := std.process.args;
+    args :: std.process.args;
 
     if args.len < 2 {
         print_stdin_loop();
