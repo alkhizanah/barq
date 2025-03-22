@@ -110,7 +110,7 @@ pub const Instruction = union(enum) {
     shl: u32,
     /// Shift to right the bits of lhs using rhs offset
     shr: u32,
-    /// Cast a value to a different type, both the value and its `to` type should alloady be on the stack
+    /// Cast a value to a different type, both the value and its `to` type should already be on the stack
     cast: u32,
     /// Import a module and push it on the stack, also pops the module file path from the stack
     import: u32,
