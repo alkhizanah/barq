@@ -897,6 +897,14 @@ fn emitCall(self: *LlvmBackend, arguments_count: usize) Error!void {
         "",
     );
 
+    c.LLVMSetInstructionCallConv(
+        call,
+        switch (function_type.calling_convention) {
+            .auto => c.LLVMFastCallConv,
+            else => c.LLVMCCallConv,
+        },
+    );
+
     if (function_return_type != .void) {
         try self.stack.append(self.allocator, .{ .type_id = function_type.return_type_id, .value = call });
     }
