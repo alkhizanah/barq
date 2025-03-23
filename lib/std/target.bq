@@ -124,3 +124,54 @@ Arch :: enum {
     // - tce
     // - tcele
 }
+
+Abi :: enum {
+    none,
+    gnu,
+    gnuabin32,
+    gnuabi64,
+    gnueabi,
+    gnueabihf,
+    gnuf32,
+    gnusf,
+    gnux32,
+    gnuilp32,
+    code16,
+    eabi,
+    eabihf,
+    ilp32,
+    android,
+    androideabi,
+    musl,
+    muslabin32,
+    muslabi64,
+    musleabi,
+    musleabihf,
+    muslx32,
+    msvc,
+    itanium,
+    cygnus,
+    simulator,
+    macabi,
+    ohos,
+    ohoseabi,
+
+    // LLVM tags deliberately omitted:
+    // - amplification
+    // - anyhit
+    // - callable
+    // - closesthit
+    // - compute
+    // - coreclr
+    // - domain
+    // - geometry
+    // - gnuf64
+    // - hull
+    // - intersection
+    // - library
+    // - mesh
+    // - miss
+    // - pixel
+    // - raygeneration
+    // - vertex
+}
