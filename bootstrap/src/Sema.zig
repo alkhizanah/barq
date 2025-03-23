@@ -171,7 +171,7 @@ pub fn analyze(self: *Sema) Error!void {
 }
 
 fn popType(self: *Sema, token_start: u32) Error!u32 {
-    const value = self.stack.pop();
+    const value = self.stack.pop().?;
 
     if (value == .module_id) {
         self.error_info = .{
@@ -204,7 +204,7 @@ fn analyzeLazyUnit(self: *Sema, global: *Global, lazy_unit: Compilation.Pool.Laz
         if (global.is_const) {
             _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(lazy_unit.value_block.?));
 
-            const value = self.stack.pop();
+            const value = self.stack.pop().?;
 
             if (value == .runtime) {
                 self.error_info = .{
@@ -220,7 +220,7 @@ fn analyzeLazyUnit(self: *Sema, global: *Global, lazy_unit: Compilation.Pool.Laz
             const maybe_value = if (lazy_unit.value_block) |value_block| blk: {
                 _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(value_block));
 
-                break :blk self.stack.pop();
+                break :blk self.stack.pop().?;
             } else null;
 
             const maybe_initializer: ?Air.Instruction = if (maybe_value) |value|
@@ -409,7 +409,7 @@ fn analyzePop(self: *Sema, count: u32) Error!void {
     var pop_count: u32 = 0;
 
     for (0..count) |_| {
-        if (self.stack.popOrNull()) |unused_value| {
+        if (self.stack.pop()) |unused_value| {
             switch (unused_value) {
                 .type_id, .module_id => {},
                 else => if (try self.getTypeFromValue(unused_value) != .void) {
@@ -514,7 +514,7 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
 fn analyzeArrayType(self: *Sema, token_start: u32) Error!void {
     const child_type_id = try self.popType(token_start);
 
-    const array_length_value = self.stack.pop();
+    const array_length_value = self.stack.pop().?;
 
     if (array_length_value == .runtime) {
         self.error_info = .{
@@ -646,7 +646,7 @@ fn analyzeFunctionType(self: *Sema, function_type: Sir.Instruction.FunctionType)
 }
 
 fn analyzeNegate(self: *Sema, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
 
     const rhs_type = try self.getTypeFromValue(rhs);
 
@@ -695,7 +695,7 @@ const NotOperation = enum {
 };
 
 fn analyzeNot(self: *Sema, comptime operand: NotOperation, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
     const rhs_type = try self.getTypeFromValue(rhs);
 
     if (operand == .bool) {
@@ -738,8 +738,8 @@ const BitwiseArithmeticOperation = enum {
 };
 
 fn analyzeBitwiseArithmetic(self: *Sema, comptime operation: BitwiseArithmeticOperation, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
-    const lhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
+    const lhs = self.stack.pop().?;
 
     var lhs_type_id = try self.getTypeIdFromValue(lhs);
     var rhs_type_id = try self.getTypeIdFromValue(rhs);
@@ -823,7 +823,7 @@ fn analyzeBitwiseArithmetic(self: *Sema, comptime operation: BitwiseArithmeticOp
 }
 
 fn analyzeLoad(self: *Sema, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
     const rhs_type = try self.getTypeFromValue(rhs);
 
     const rhs_pointer = rhs_type.getPointer() orelse try self.reportNotPointer(rhs_type, token_start);
@@ -843,12 +843,12 @@ fn analyzeLoad(self: *Sema, token_start: u32) Error!void {
 }
 
 fn analyzeStore(self: *Sema, token_start: u32) Error!void {
-    const lhs = self.stack.pop();
+    const lhs = self.stack.pop().?;
     const lhs_type = try self.getTypeFromValue(lhs);
 
     const lhs_pointer = lhs_type.getPointer() orelse try self.reportNotPointer(lhs_type, token_start);
 
-    const rhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
 
     if (self.compilation.getTypeFromId(lhs_pointer.child_type_id) == .function) {
         self.error_info = .{
@@ -910,7 +910,7 @@ fn analyzeSetGlobalVal(self: *Sema, name: Name) Error!void {
         _ = self.compilation.pool.lazy_units.remove(global.air_name);
     }
 
-    const value = self.stack.pop();
+    const value = self.stack.pop().?;
 
     if (value == .function) {
         self.error_info = .{
@@ -928,7 +928,7 @@ fn analyzeSetGlobalVal(self: *Sema, name: Name) Error!void {
 }
 
 fn analyzeGetField(self: *Sema, name: Name) Error!void {
-    const container = self.stack.pop();
+    const container = self.stack.pop().?;
     const container_type_id = try self.getTypeIdFromValue(container);
     var container_type = self.compilation.getTypeFromId(container_type_id);
 
@@ -955,7 +955,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
         self.air_instructions.getLast() == .load and
         (container_type != .pointer or (container_type == .pointer and container_type.pointer.size == .slice)))
     {
-        _ = self.air_instructions.pop();
+        _ = self.air_instructions.pop().?;
 
         container_type = .{
             .pointer = .{
@@ -982,7 +982,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
         }
     } else if (container_type == .pointer and (container_type.pointer.size == .slice or
         (self.compilation.getTypeFromId(container_type.pointer.child_type_id) == .pointer and
-        self.compilation.getTypeFromId(container_type.pointer.child_type_id).pointer.size == .slice)))
+            self.compilation.getTypeFromId(container_type.pointer.child_type_id).pointer.size == .slice)))
     {
         if (std.mem.eql(u8, name.buffer, "len")) {
             if (container_type.pointer.size == .slice) {
@@ -1066,7 +1066,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
 }
 
 fn analyzeHasField(self: *Sema, token_start: u32) Error!void {
-    const field_name = switch (self.stack.pop()) {
+    const field_name = switch (self.stack.pop().?) {
         .string => |range| self.compilation.getStringFromRange(range),
 
         else => {
@@ -1079,7 +1079,7 @@ fn analyzeHasField(self: *Sema, token_start: u32) Error!void {
         },
     };
 
-    const container = self.stack.pop();
+    const container = self.stack.pop().?;
 
     const container_has_field = switch (container) {
         .module_id => |id| self.compilation.getModulePtrFromId(id).globals.contains(field_name),
@@ -1128,13 +1128,13 @@ fn analyzePreGetElement(self: *Sema, token_start: u32) Error!void {
 }
 
 fn analyzeGetElement(self: *Sema, token_start: u32) Error!void {
-    const index = self.stack.pop();
+    const index = self.stack.pop().?;
 
     const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
 
     try self.checkUnaryImplicitCast(index, usize_type, token_start);
 
-    const lhs = self.stack.pop();
+    const lhs = self.stack.pop().?;
     const lhs_type = try self.getTypeFromValue(lhs);
     const lhs_pointer_type = lhs_type.pointer;
 
@@ -1152,10 +1152,10 @@ fn analyzeGetElement(self: *Sema, token_start: u32) Error!void {
 }
 
 fn analyzeMakeSlice(self: *Sema, token_start: u32) Error!void {
-    const end = self.stack.pop();
-    const start = self.stack.pop();
+    const end = self.stack.pop().?;
+    const start = self.stack.pop().?;
 
-    const lhs = self.stack.pop();
+    const lhs = self.stack.pop().?;
     const lhs_type = try self.getTypeFromValue(lhs);
 
     const lhs_pointer_type = if (lhs_type.getPointer()) |pointer| pointer else try self.reportNotPointer(lhs_type, token_start);
@@ -1186,7 +1186,7 @@ fn analyzeMakeSlice(self: *Sema, token_start: u32) Error!void {
 }
 
 fn analyzeReference(self: *Sema, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
     const rhs_type_id = try self.getTypeIdFromValue(rhs);
     const rhs_type = self.compilation.getTypeFromId(rhs_type_id);
 
@@ -1213,7 +1213,7 @@ fn analyzeReference(self: *Sema, token_start: u32) Error!void {
             const last_instruction = &self.air_instructions.items[self.air_instructions.items.len - 1];
 
             switch (last_instruction.*) {
-                .load => _ = self.air_instructions.pop(),
+                .load => _ = self.air_instructions.pop().?,
 
                 else => {
                     if (rhs == .runtime) {
@@ -1266,8 +1266,8 @@ const ArithmeticOperation = enum {
 };
 
 fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
-    const lhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
+    const lhs = self.stack.pop().?;
 
     var lhs_type_id = try self.getTypeIdFromValue(lhs);
     var rhs_type_id = try self.getTypeIdFromValue(rhs);
@@ -1418,8 +1418,8 @@ const ComparisonOperation = enum {
 };
 
 fn analyzeComparison(self: *Sema, comptime operation: ComparisonOperation, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
-    const lhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
+    const lhs = self.stack.pop().?;
 
     var lhs_type_id = try self.getTypeIdFromValue(lhs);
     var rhs_type_id = try self.getTypeIdFromValue(rhs);
@@ -1527,8 +1527,8 @@ const BitwiseShiftDirection = enum {
 };
 
 fn analyzeBitwiseShift(self: *Sema, comptime direction: BitwiseShiftDirection, token_start: u32) Error!void {
-    const rhs = self.stack.pop();
-    const lhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
+    const lhs = self.stack.pop().?;
 
     const lhs_type_id = try self.getTypeIdFromValue(lhs);
 
@@ -1580,7 +1580,7 @@ fn analyzeCast(self: *Sema, token_start: u32) Error!void {
 
     if (from_type.eql(self.compilation.*, to_type)) return;
 
-    const rhs = self.stack.pop();
+    const rhs = self.stack.pop().?;
 
     if (to_type == .void) {
         self.error_info = .{ .message = "cannot cast to 'void' as it is not possible to represent a value of this type", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
@@ -1736,13 +1736,13 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
 }
 
 fn analyzeImport(self: *Sema, token_start: u32) Error!void {
-    if (self.air_instructions.pop() != .string) {
+    if (self.air_instructions.pop().? != .string) {
         self.error_info = .{ .message = "expected a compile time known string for import file path", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
         return error.WithMessage;
     }
 
-    const file_path = self.compilation.getStringFromRange(self.stack.pop().string);
+    const file_path = self.compilation.getStringFromRange(self.stack.pop().?.string);
 
     const import_file = try self.getImportFile(file_path, token_start);
 
@@ -1820,7 +1820,7 @@ fn analyzeInlineAssembly(self: *Sema, inline_assembly: Sir.Instruction.InlineAss
 }
 
 fn analyzeCall(self: *Sema, call: Sir.Instruction.Call) Error!void {
-    const callable = self.stack.pop();
+    const callable = self.stack.pop().?;
     const callable_type = try self.getTypeFromValue(callable);
 
     if (callable_type.getFunction(self.compilation.*)) |function| {
@@ -1842,7 +1842,7 @@ fn analyzeCall(self: *Sema, call: Sir.Instruction.Call) Error!void {
         for (function.parameter_type_ids) |parameter_type_id| {
             const parameter_type = self.compilation.getTypeFromId(parameter_type_id);
 
-            const argument = self.stack.pop();
+            const argument = self.stack.pop().?;
 
             try self.checkUnaryImplicitCast(argument, parameter_type, call.token_start);
         }
@@ -1903,7 +1903,7 @@ fn analyzeAlloca(self: *Sema, comptime infer: bool, token_start: u32) Error!void
     }
 
     if (self.air_instructions.items.len > 0 and self.air_instructions.getLast() == .reverse) {
-        _ = self.air_instructions.pop();
+        _ = self.air_instructions.pop().?;
     }
 
     try self.air_instructions.append(self.allocator, .{ .alloca = type_id });
@@ -1943,7 +1943,7 @@ fn analyzeBlockInstructions(self: *Sema, id: u32) Error!u32 {
 fn analyzeLoop(self: *Sema, loop: Sir.Instruction.Loop) Error!void {
     const analyzed_condition_block = try self.analyzeBlockInstructions(loop.condition_block);
 
-    const condition = self.stack.pop();
+    const condition = self.stack.pop().?;
 
     try self.checkUnaryImplicitCast(condition, .bool, loop.token_start);
 
@@ -1958,7 +1958,7 @@ fn analyzeLoop(self: *Sema, loop: Sir.Instruction.Loop) Error!void {
 }
 
 fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Error!void {
-    const condition = self.stack.pop();
+    const condition = self.stack.pop().?;
 
     try self.checkUnaryImplicitCast(condition, .bool, conditional.token_start);
 
@@ -1975,7 +1975,7 @@ fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Err
             else
                 null;
 
-            const maybe_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
+            const maybe_value = if (self.stack.items.len > previous_stack_len) self.stack.pop().? else null;
 
             if (maybe_value) |value| {
                 switch (value) {
@@ -2002,14 +2002,14 @@ fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Err
             const previous_stack_len = self.stack.items.len;
 
             const analyzed_then_block = try self.analyzeBlockInstructions(conditional.then_block);
-            const maybe_then_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
+            const maybe_then_value = if (self.stack.items.len > previous_stack_len) self.stack.pop().? else null;
 
             const maybe_analyzed_else_block = if (conditional.else_block) |else_block|
                 try self.analyzeBlockInstructions(else_block)
             else
                 null;
 
-            const maybe_else_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
+            const maybe_else_value = if (self.stack.items.len > previous_stack_len) self.stack.pop().? else null;
 
             if (maybe_then_value) |then_value| {
                 var then_value_type_id = try self.getTypeIdFromValue(then_value);
@@ -2069,7 +2069,7 @@ fn analyzeConditional(self: *Sema, conditional: Sir.Instruction.Conditional) Err
 }
 
 fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
-    const switched_on_value = self.stack.pop();
+    const switched_on_value = self.stack.pop().?;
     const switched_on_value_type = try self.getTypeFromValue(switched_on_value);
 
     const maybe_switched_on_value_int: ?i128 = if (switched_on_value == .int)
@@ -2085,7 +2085,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
     defer case_values.deinit(self.allocator);
 
     for (@"switch".case_blocks, @"switch".case_token_starts) |case_block, case_token_start| {
-        const case_value = self.stack.pop();
+        const case_value = self.stack.pop().?;
 
         if (maybe_switched_on_value_int == null) {
             try self.checkUnaryImplicitCast(case_value, switched_on_value_type, case_token_start);
@@ -2122,7 +2122,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
 
         const analyzed_block = try self.analyzeBlockInstructions(case_values.get(switched_on_value_int) orelse @"switch".else_block);
 
-        const maybe_value = if (self.stack.items.len > previous_stack_len) self.stack.pop() else null;
+        const maybe_value = if (self.stack.items.len > previous_stack_len) self.stack.pop().? else null;
 
         if (maybe_value) |value| {
             try self.air_instructions.append(self.allocator, .{ .pop = case_values.count() + 1 });
@@ -2155,7 +2155,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
             const analyzed_case_block = try self.analyzeBlockInstructions(case_block);
 
             const next_result_type_id = if (self.stack.items.len > previous_stack_len)
-                try self.getTypeIdFromValue(self.stack.pop())
+                try self.getTypeIdFromValue(self.stack.pop().?)
             else
                 try self.compilation.putType(.void);
 
@@ -2196,7 +2196,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
             const analyzed_else_block = try self.analyzeBlockInstructions(@"switch".else_block);
 
             const next_result_type_id = if (self.stack.items.len > previous_stack_len)
-                try self.getTypeIdFromValue(self.stack.pop())
+                try self.getTypeIdFromValue(self.stack.pop().?)
             else
                 try self.compilation.putType(.void);
 
@@ -2252,7 +2252,7 @@ fn analyzeReturn(self: *Sema, comptime with_value: bool, token_start: u32) Error
     const return_type = self.compilation.getTypeFromId(self.function_type.return_type_id);
 
     if (with_value) {
-        try self.checkUnaryImplicitCast(self.stack.pop(), return_type, token_start);
+        try self.checkUnaryImplicitCast(self.stack.pop().?, return_type, token_start);
     } else {
         if (return_type != .void) {
             self.error_info = .{ .message = "function with non void return type returns void", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
@@ -2269,18 +2269,18 @@ fn canUnaryImplicitCast(self: Sema, lhs: Value, to_type: Type) std.mem.Allocator
 
     return (lhs_type.eql(self.compilation.*, to_type) or
         (lhs == .int and to_type == .int and self.compilation.getIntFromId(lhs.int) >= to_type.minInt() and
-        lhs == .int and to_type == .int and self.compilation.getIntFromId(lhs.int) <= to_type.maxInt()) or
+            lhs == .int and to_type == .int and self.compilation.getIntFromId(lhs.int) <= to_type.maxInt()) or
         (lhs == .float and to_type == .float and lhs.float >= -to_type.maxFloat() and
-        lhs == .float and to_type == .float and lhs.float <= to_type.maxFloat()) or
+            lhs == .float and to_type == .float and lhs.float <= to_type.maxFloat()) or
         (lhs_type == .int and to_type == .int and
-        lhs_type.maxInt() <= to_type.maxInt() and lhs_type.minInt() >= to_type.minInt() and
-        lhs_type.canBeNegative() == to_type.canBeNegative()) or
+            lhs_type.maxInt() <= to_type.maxInt() and lhs_type.minInt() >= to_type.minInt() and
+            lhs_type.canBeNegative() == to_type.canBeNegative()) or
         (lhs_type == .float and to_type == .float and
-        lhs_type.maxFloat() <= to_type.maxFloat()) or
+            lhs_type.maxFloat() <= to_type.maxFloat()) or
         (lhs_type == .pointer and to_type == .pointer and self.compilation.getTypeFromId(lhs_type.pointer.child_type_id) == .array and
-        (to_type.pointer.size == .many or to_type.pointer.size == .slice) and
-        self.compilation.getTypeFromId(self.compilation.getTypeFromId(lhs_type.pointer.child_type_id).array.child_type_id)
-        .eql(self.compilation.*, self.compilation.getTypeFromId(to_type.pointer.child_type_id))));
+            (to_type.pointer.size == .many or to_type.pointer.size == .slice) and
+            self.compilation.getTypeFromId(self.compilation.getTypeFromId(lhs_type.pointer.child_type_id).array.child_type_id)
+                .eql(self.compilation.*, self.compilation.getTypeFromId(to_type.pointer.child_type_id))));
 }
 
 fn checkUnaryImplicitCast(self: *Sema, lhs: Value, to_type: Type, token_start: u32) Error!void {
@@ -2304,7 +2304,7 @@ fn checkUnaryImplicitCast(self: *Sema, lhs: Value, to_type: Type, token_start: u
 fn checkIndexOutOfBounds(self: *Sema, index: Value, lhs_pointer: Type.Pointer, token_start: u32) Error!void {
     if (index == .int and self.compilation.getTypeFromId(lhs_pointer.child_type_id) == .array and
         self.compilation.getIntFromId(index.int) >=
-        self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
+            self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
     {
         self.error_info = .{ .message = "index out of bounds", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
@@ -2322,7 +2322,7 @@ fn checkRangeOutOfBounds(self: *Sema, start: Value, end: Value, lhs_pointer: Typ
 
         if (self.compilation.getTypeFromId(lhs_pointer.child_type_id) == .array and
             self.compilation.getIntFromId(start.int) >=
-            self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
+                self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
         {
             self.error_info = .{ .message = "range start out of bounds", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 
@@ -2332,7 +2332,7 @@ fn checkRangeOutOfBounds(self: *Sema, start: Value, end: Value, lhs_pointer: Typ
 
     if (end == .int and self.compilation.getTypeFromId(lhs_pointer.child_type_id) == .array and
         self.compilation.getIntFromId(end.int) >
-        self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
+            self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_pointer.child_type_id).array.len_int_id))
     {
         self.error_info = .{ .message = "range end out of bounds", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, token_start) };
 

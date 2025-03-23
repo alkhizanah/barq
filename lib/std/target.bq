@@ -21,7 +21,6 @@ Os :: enum {
     netbsd,
     openbsd,
 
-    bridgeos,
     driverkit,
     ios,
     macos,
@@ -51,7 +50,8 @@ Os :: enum {
     opengl,
     vulkan,
 
-    // LLVM tags deliberately omitted :
+    // LLVM tags deliberately omitted:
+    // - bridgeos
     // - darwin
     // - kfreebsd
     // - nacl
@@ -88,8 +88,7 @@ Arch :: enum {
     powerpcle,
     powerpc64,
     powerpc64le,
-    propeller1,
-    propeller2,
+    propeller,
     riscv32,
     riscv64,
     s390x,
@@ -98,7 +97,6 @@ Arch :: enum {
     spirv,
     spirv32,
     spirv64,
-    spu_2,
     ve,
     wasm32,
     wasm64,
@@ -107,7 +105,7 @@ Arch :: enum {
     xcore,
     xtensa,
 
-    // LLVM tags deliberately omitted :
+    // LLVM tags deliberately omitted:
     // - aarch64_32
     // - amdil
     // - amdil64
@@ -125,55 +123,4 @@ Arch :: enum {
     // - spir64
     // - tce
     // - tcele
-}
-
-Abi :: enum {
-    none,
-    gnu,
-    gnuabin32,
-    gnuabi64,
-    gnueabi,
-    gnueabihf,
-    gnuf32,
-    gnusf,
-    gnux32,
-    gnuilp32,
-    code16,
-    eabi,
-    eabihf,
-    ilp32,
-    android,
-    androideabi,
-    musl,
-    muslabin32,
-    muslabi64,
-    musleabi,
-    musleabihf,
-    muslx32,
-    msvc,
-    itanium,
-    cygnus,
-    simulator,
-    macabi,
-    ohos,
-    ohoseabi,
-
-    // LLVM tags deliberately omitted:
-    // - amplification
-    // - anyhit
-    // - callable
-    // - closesthit
-    // - compute
-    // - coreclr
-    // - domain
-    // - geometry
-    // - gnuf64
-    // - hull
-    // - intersection
-    // - library
-    // - mesh
-    // - miss
-    // - pixel
-    // - raygeneration
-    // - vertex
 }

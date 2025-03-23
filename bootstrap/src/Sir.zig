@@ -646,7 +646,7 @@ pub const Parser = struct {
 
     fn popScopeDefers(self: *Parser) Error!void {
         while (self.scope_defers_count > 0) : (self.scope_defers_count -= 1) {
-            const defer_block = self.defer_blocks_stack.pop();
+            const defer_block = self.defer_blocks_stack.pop().?;
 
             try self.sir_instructions.append(self.allocator, .{ .block = defer_block });
         }
@@ -1413,7 +1413,7 @@ pub const Parser = struct {
 
                 try self.parseInt();
 
-                field_int_id = self.sir_instructions.pop().int;
+                field_int_id = self.sir_instructions.pop().?.int;
             }
 
             if (!self.eat(.comma) and self.tokenTag() != .close_brace) {
@@ -1536,7 +1536,7 @@ pub const Parser = struct {
                     return error.WithMessage;
                 }
 
-                maybe_foreign = self.sir_instructions.pop().string;
+                maybe_foreign = self.sir_instructions.pop().?.string;
             } else if (std.mem.eql(u8, special_identifier, "callconv")) {
                 self.advance();
 
@@ -1731,7 +1731,7 @@ pub const Parser = struct {
         while (self.tokenTag() == .string_literal) {
             try self.parseString();
 
-            const string = self.sir_instructions.pop().string;
+            const string = self.sir_instructions.pop().?.string;
 
             try content.appendSlice(self.allocator, self.compilation.getStringFromRange(string));
 
@@ -1810,7 +1810,7 @@ pub const Parser = struct {
 
         try self.parseString();
 
-        const register = self.sir_instructions.pop().string;
+        const register = self.sir_instructions.pop().?.string;
 
         if (!self.eat(.open_paren)) {
             self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
@@ -1841,7 +1841,7 @@ pub const Parser = struct {
 
             try self.parseString();
 
-            const clobber = self.sir_instructions.pop().string;
+            const clobber = self.sir_instructions.pop().?.string;
 
             try clobbers.append(clobber);
 
@@ -1973,7 +1973,7 @@ pub const Parser = struct {
                 else
                     null;
 
-                const last_instruction = self.sir_instructions.pop();
+                const last_instruction = self.sir_instructions.pop().?;
 
                 if (last_instruction == .get_element or last_instruction == .get_field) {
                     try self.sir_instructions.appendSlice(self.allocator, &.{
