@@ -461,8 +461,16 @@ fn analyzeFunction(self: *Sema, function: Sir.Instruction.Function) Error!void {
 
     self.function_type = self.compilation.getTypeFromId(function_type_id).function;
 
-    const air_name = if (function.foreign) |foreign|
-        try self.allocator.dupe(u8, self.compilation.getStringFromRange(foreign))
+    const air_name = if (function.is_foreign)
+        if (function.foreign_name) |foreign_name|
+            try self.allocator.dupe(u8, self.compilation.getStringFromRange(foreign_name))
+        else if (function.name) |foreign_name|
+            foreign_name.buffer
+        else {
+            self.error_info = .{ .message = "could not infer the foreign name, could you provide it explicitly? (for example: @foreign(\"name\"))", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, function.token_start) };
+
+            return error.WithMessage;
+        }
     else if (function.name) |name|
         try std.fmt.allocPrint(self.allocator, "{s}.{}", .{ name.buffer, self.module_id })
     else
@@ -891,6 +899,7 @@ fn analyzeGetGlobalVal(self: *Sema, maybe_global: ?*Global, name: Name) Error!vo
         .int => |id| try self.air_instructions.append(self.allocator, .{ .int = id }),
         .float => |float| try self.air_instructions.append(self.allocator, .{ .float = float }),
         .boolean => |boolean| try self.air_instructions.append(self.allocator, .{ .boolean = boolean }),
+        .uninitialized => |id| try self.air_instructions.append(self.allocator, .{ .uninitialized = id }),
         .runtime => try self.air_instructions.appendSlice(self.allocator, &.{
             .{ .get_global_ptr = global.air_name },
             .load,

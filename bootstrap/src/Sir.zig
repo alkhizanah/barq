@@ -194,7 +194,8 @@ pub const Instruction = union(enum) {
 
     pub const Function = struct {
         name: ?Name = null,
-        foreign: ?Range = null,
+        is_foreign: bool = false,
+        foreign_name: ?Range = null,
         body_block: ?u32 = null,
         token_start: u32,
     };
@@ -1499,7 +1500,8 @@ pub const Parser = struct {
             try self.sir_instructions.append(self.allocator, .void_type);
         }
 
-        var maybe_foreign: ?Range = null;
+        var is_foreign: bool = false;
+        var maybe_foreign_name: ?Range = null;
         var maybe_calling_convention: ?Type.Function.CallingConvention = null;
 
         while (self.tokenTag() == .special_identifier) {
@@ -1508,10 +1510,10 @@ pub const Parser = struct {
             if (std.mem.eql(u8, special_identifier, "foreign")) {
                 self.advance();
 
-                if (!self.eat(.open_paren)) {
-                    self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                is_foreign = true;
 
-                    return error.WithMessage;
+                if (!self.eat(.open_paren)) {
+                    continue;
                 }
 
                 if (self.tokenTag() != .string_literal) {
@@ -1528,7 +1530,7 @@ pub const Parser = struct {
                     return error.WithMessage;
                 }
 
-                maybe_foreign = self.sir_instructions.pop().?.string;
+                maybe_foreign_name = self.sir_instructions.pop().?.string;
             } else if (std.mem.eql(u8, special_identifier, "callconv")) {
                 self.advance();
 
@@ -1574,7 +1576,7 @@ pub const Parser = struct {
             }
         }
 
-        const calling_convention: Type.Function.CallingConvention = maybe_calling_convention orelse if (maybe_foreign == null) .auto else .c;
+        const calling_convention: Type.Function.CallingConvention = maybe_calling_convention orelse if (!is_foreign) .auto else .c;
 
         try self.sir_instructions.append(self.allocator, .{
             .function_type = .{
@@ -1628,15 +1630,17 @@ pub const Parser = struct {
 
             try self.sir_instructions.append(self.allocator, .{
                 .function = .{
-                    .foreign = maybe_foreign,
+                    .is_foreign = is_foreign,
+                    .foreign_name = maybe_foreign_name,
                     .body_block = @intCast(self.sir.blocks.items.len - 1),
                     .token_start = fn_keyword_start,
                 },
             });
-        } else if (maybe_foreign) |foreign| {
+        } else if (is_foreign) {
             try self.sir_instructions.append(self.allocator, .{
                 .function = .{
-                    .foreign = foreign,
+                    .is_foreign = is_foreign,
+                    .foreign_name = maybe_foreign_name,
                     .token_start = fn_keyword_start,
                 },
             });

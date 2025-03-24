@@ -9,7 +9,7 @@
 
 std :: @import("std");
 
-main :: fn () u8 @foreign("main") {
+main :: fn () u8 @foreign {
     display :: open_display(0 as [*]const u8);
 
     if display as usize == 0 {

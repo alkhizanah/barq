@@ -27,7 +27,7 @@ noise :: fn () {
     }
 }
 
-main :: fn () u8 @foreign("main") {
+main :: fn () u8 @foreign {
     set_config_flags(FLAG_WINDOW_RESIZABLE);
 
     init_window(800, 600, "Raylib Example");
