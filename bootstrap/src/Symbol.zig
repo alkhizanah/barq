@@ -85,18 +85,6 @@ pub const Type = union(enum) {
         child_type_id: u32,
     };
 
-    pub const HashContext = struct {
-        pub fn hash(_: HashContext, key: Type) u32 {
-            var hasher = std.hash.Wyhash.init(0);
-            std.hash.autoHashStrat(&hasher, key, .DeepRecursive);
-            return @truncate(hasher.final());
-        }
-
-        pub fn eql(_: HashContext, key: Type, other_key: Type, _: usize) bool {
-            return std.meta.eql(key, other_key);
-        }
-    };
-
     pub fn minInt(self: Type) i128 {
         return switch (self) {
             .int => |int| {

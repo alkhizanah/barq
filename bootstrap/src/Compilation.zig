@@ -28,7 +28,7 @@ pool: Pool = .{},
 pub const Pool = struct {
     modules: std.StringArrayHashMapUnmanaged(Module) = .{},
     lazy_units: std.StringHashMapUnmanaged(LazyUnit) = .{},
-    types: std.ArrayHashMapUnmanaged(Type, void, Type.HashContext, false) = .{},
+    types: std.AutoHashMapUnmanaged(u32, Type) = .{},
     ints: std.AutoArrayHashMapUnmanaged(i128, void) = .{},
     bytes: std.ArrayListUnmanaged(u8) = .{},
 
@@ -58,16 +58,41 @@ pub inline fn ensureTypesUnusedCapacity(self: *Compilation, additional_capacity:
     try self.pool.types.ensureUnusedCapacity(self.allocator, additional_capacity);
 }
 
-pub inline fn putTypeAssumeCapacity(self: *Compilation, @"type": Type) u32 {
-    return @intCast((self.pool.types.getOrPutAssumeCapacity(@"type")).index);
+pub fn hashType(self: Compilation, @"type": Type) u32 {
+    var hasher = std.hash.Wyhash.init(0);
+
+    const HashWriterContext = struct {
+        hasher: *std.hash.Wyhash,
+
+        fn write(context: @This(), bytes: []const u8) error{}!usize {
+            context.hasher.update(bytes);
+            return bytes.len;
+        }
+    };
+
+    const HashWriter = std.io.Writer(HashWriterContext, error{}, HashWriterContext.write);
+
+    const writer: HashWriter = .{ .context = .{ .hasher = &hasher } };
+
+    try @"type".format(self, writer);
+
+    return @truncate(hasher.final());
 }
 
-pub inline fn putType(self: *Compilation, @"type": Type) std.mem.Allocator.Error!u32 {
-    return @intCast((try self.pool.types.getOrPut(self.allocator, @"type")).index);
+pub fn putTypeAssumeCapacity(self: *Compilation, @"type": Type) u32 {
+    const hash = self.hashType(@"type");
+    self.pool.types.putAssumeCapacity(self.allocator, hash, @"type");
+    return hash;
 }
 
-pub inline fn getTypeFromId(self: Compilation, id: u32) Type {
-    return self.pool.types.keys()[id];
+pub fn putType(self: *Compilation, @"type": Type) std.mem.Allocator.Error!u32 {
+    const hash = self.hashType(@"type");
+    try self.pool.types.put(self.allocator, hash, @"type");
+    return hash;
+}
+
+pub inline fn getTypeFromId(self: Compilation, hash: u32) Type {
+    return self.pool.types.get(hash).?;
 }
 
 pub inline fn putInt(self: *Compilation, int: i128) std.mem.Allocator.Error!u32 {
