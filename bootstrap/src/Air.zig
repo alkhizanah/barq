@@ -20,7 +20,7 @@ functions: std.StringArrayHashMapUnmanaged(Function) = .{},
 
 pub const Variable = struct {
     type_id: u32,
-    initializer: ?Instruction = null,
+    initializer: Instruction,
 };
 
 pub const Function = struct {
@@ -37,6 +37,8 @@ pub const Instruction = union(enum) {
     float: f64,
     /// Push a boolean onto the stack
     boolean: bool,
+    /// Push a value that is the representation of uninitialization, basically could be anything, the user doesn't care
+    uninitialized: u32,
     /// Negate an integer or float on the top of the stack
     negate,
     /// Reverse a boolean from true to false and from false to true

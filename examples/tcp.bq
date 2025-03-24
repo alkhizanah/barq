@@ -27,7 +27,7 @@ server_init :: fn (server : *Server) {
     setsockopt(server.fd, SOL_SOCKET, SO_REUSEADDR, &optlevel as usize, 4);
     setsockopt(server.fd, SOL_SOCKET, SO_REUSEPORT, &optlevel as usize, 4);
 
-    address : sockaddr_in;
+    address := @uninitialized(sockaddr_in);
     address.family = AF_INET;
     address.port = 0x901f;
     address.addr = 0;
@@ -53,7 +53,7 @@ server_init :: fn (server : *Server) {
 }
 
 server_accept :: fn (server : Server, client : *Client) {
-    address_len : socklen_t;
+    address_len : socklen_t = 0;
 
     print("accepting request.. ");
 
@@ -92,8 +92,8 @@ echo :: fn (client : Client) {
 }
 
 main :: fn () {
-    server : Server;
-    client : Client;
+    server := @uninitialized(Server);
+    client := @uninitialized(Client);
 
     server_init(&server);
 

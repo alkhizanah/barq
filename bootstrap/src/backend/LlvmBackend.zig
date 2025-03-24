@@ -97,19 +97,15 @@ pub fn emit(
         const llvm_pointer = c.LLVMAddGlobal(self.module, llvm_type, variable_name_z);
         self.allocator.free(variable_name_z);
 
-        if (variable.initializer) |initializer| {
-            try self.emitInstruction(initializer);
+        try self.emitInstruction(variable.initializer);
 
-            var initializer_register = self.stack.pop().?;
+        var initializer_register = self.stack.pop().?;
 
-            try self.unaryImplicitCast(&initializer_register, variable.type_id);
+        try self.unaryImplicitCast(&initializer_register, variable.type_id);
 
-            _ = c.LLVMSetInitializer(llvm_pointer, initializer_register.value);
+        _ = c.LLVMSetInitializer(llvm_pointer, initializer_register.value);
 
-            self.stack.clearRetainingCapacity();
-        } else {
-            _ = c.LLVMSetInitializer(llvm_pointer, c.LLVMGetUndef(llvm_type));
-        }
+        self.stack.clearRetainingCapacity();
 
         self.globals.putAssumeCapacity(variable_name, .{
             .type_id = variable.type_id,
@@ -264,6 +260,7 @@ fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!v
         .int => |int| try self.emitInt(int),
         .float => |float| try self.emitFloat(float),
         .boolean => |boolean| try self.emitBoolean(boolean),
+        .uninitialized => |id| try self.emitUninitialized(id),
 
         .negate => try self.emitNegate(),
 
@@ -357,6 +354,17 @@ fn emitBoolean(self: *LlvmBackend, boolean: bool) Error!void {
     try self.stack.append(self.allocator, .{
         .type_id = try self.compilation.putType(.bool),
         .value = c.LLVMConstInt(try self.llvmType(.bool), @intFromBool(boolean), 0),
+    });
+}
+
+fn emitUninitialized(self: *LlvmBackend, type_id: u32) Error!void {
+    const @"type" = self.compilation.getTypeFromId(type_id);
+
+    const llvm_type = try self.llvmType(@"type");
+
+    try self.stack.append(self.allocator, .{
+        .type_id = type_id,
+        .value = c.LLVMGetUndef(llvm_type),
     });
 }
 

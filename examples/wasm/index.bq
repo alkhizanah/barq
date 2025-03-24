@@ -18,8 +18,8 @@ rand :: fn (end : u32) u32 @foreign("rand");
 get_width :: fn () u32 @foreign("get_width");
 get_height :: fn () u32 @foreign("get_height");
 
-width : u32;
-height : u32;
+width : u32 = 0;
+height : u32 = 0;
 
 noise :: fn () {
     i : u8 = 0;

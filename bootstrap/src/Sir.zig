@@ -29,8 +29,8 @@ pub const Variable = struct {
     /// A block that when evaluated by the semantic analyzer, it would get this variable's type, if this is null then semantic
     /// analyzer should try inferring the type
     type_block: ?u32 = null,
-    /// A block that when evaluated by the semantic analyzer, it would get this variable's value, if this is null then the variable is not initialized
-    value_block: ?u32 = null,
+    /// A block that when evaluated by the semantic analyzer, it would get this variable's value
+    value_block: u32,
 };
 
 pub const Constant = struct {
@@ -51,6 +51,9 @@ pub const Instruction = union(enum) {
     boolean: bool,
     /// Push a function value onto the stack, function type should be on the stack
     function: Function,
+    /// Push a value that is the representation of uninitialization, basically could be anything, the user doesn't care
+    /// Type of this value should be on the stack
+    uninitialized: u32,
     /// Push a void type onto the stack
     void_type,
     /// Push a bool type onto the stack
@@ -59,7 +62,6 @@ pub const Instruction = union(enum) {
     int_type: Type.Int,
     /// Push a float type onto the stack
     float_type: Type.Float,
-    /// Push a float type onto the stack
     /// Push an array type onto the stack, array length and child type should be on the stack
     array_type: u32,
     /// Push a pointer type onto the stack, child type should be on the stack
@@ -411,26 +413,8 @@ pub const Parser = struct {
                 const type_block: u32 = @intCast(self.sir.blocks.items.len);
                 if (top_level) try self.sir.blocks.append(self.allocator, type_instructions);
 
-                if (self.eat(.semicolon)) {
-                    if (top_level) {
-                        return self.sir.variables.put(self.allocator, name.buffer, .{
-                            .token_start = name.token_start,
-                            .type_block = type_block,
-                        });
-                    } else {
-                        try self.sir_instructions.append(self.allocator, .{ .alloca = name.token_start });
-
-                        self.alloca_count += 1;
-
-                        return self.scope.put(self.allocator, name.buffer, .{
-                            .is_const = false,
-                            .stack_index = self.alloca_count - 1,
-                        });
-                    }
-                }
-
                 if (!self.eat(.assign)) {
-                    self.error_info = .{ .message = "expected either '=' or ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+                    self.error_info = .{ .message = "expected a '='", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
                 }
@@ -442,10 +426,6 @@ pub const Parser = struct {
 
                 const value_block: u32 = @intCast(self.sir.blocks.items.len);
                 if (top_level) try self.sir.blocks.append(self.allocator, value_instructions);
-
-                if (self.sir_instructions.getLast() == .function) {
-                    self.sir_instructions.items[self.sir_instructions.items.len - 1].function.name = name;
-                }
 
                 if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
                     self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
@@ -489,10 +469,6 @@ pub const Parser = struct {
                 const value_block: u32 = @intCast(self.sir.blocks.items.len);
                 if (top_level) try self.sir.blocks.append(self.allocator, value_instructions);
 
-                if (self.sir_instructions.getLast() == .function) {
-                    self.sir_instructions.items[self.sir_instructions.items.len - 1].function.name = name;
-                }
-
                 if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
                     self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
@@ -500,6 +476,10 @@ pub const Parser = struct {
                 }
 
                 if (top_level) {
+                    if (self.sir_instructions.getLast() == .function) {
+                        self.sir_instructions.items[self.sir_instructions.items.len - 1].function.name = name;
+                    }
+
                     try self.sir.constants.put(self.allocator, name.buffer, .{
                         .token_start = name.token_start,
                         .value_block = value_block,
@@ -524,10 +504,6 @@ pub const Parser = struct {
 
                 const value_block: u32 = @intCast(self.sir.blocks.items.len);
                 if (top_level) try self.sir.blocks.append(self.allocator, value_instructions);
-
-                if (self.sir_instructions.getLast() == .function) {
-                    self.sir_instructions.items[self.sir_instructions.items.len - 1].function.name = name;
-                }
 
                 if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
                     self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
@@ -1132,6 +1108,22 @@ pub const Parser = struct {
             }
 
             try self.sir_instructions.append(self.allocator, .{ .import = token_start });
+        } else if (std.mem.eql(u8, token_value, "uninitialized")) {
+            if (!self.eat(.open_paren)) {
+                self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            try self.parseExpr(.lowest);
+
+            if (!self.eat(.close_paren)) {
+                self.error_info = .{ .message = "expected a ')'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                return error.WithMessage;
+            }
+
+            try self.sir_instructions.append(self.allocator, .{ .uninitialized = token_start });
         } else if (std.mem.eql(u8, token_value, "has_field")) {
             if (!self.eat(.open_paren)) {
                 self.error_info = .{ .message = "expected a '('", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };

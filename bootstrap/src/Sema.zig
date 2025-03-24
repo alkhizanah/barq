@@ -50,6 +50,7 @@ const Value = union(enum(u8)) {
     function: u32,
     module_id: u32,
     type_id: u32,
+    uninitialized: u32,
     runtime: u32,
 };
 
@@ -71,6 +72,7 @@ fn getTypeFromValue(self: Sema, value: Value) std.mem.Allocator.Error!Type {
         },
         .float => |float| Type.floatFittingRange(float, float),
         .function => |id| self.compilation.getTypeFromId(self.air.functions.values()[id].type_id),
+        .uninitialized => |id| self.compilation.getTypeFromId(id),
         .runtime => |id| self.compilation.getTypeFromId(id),
     };
 }
@@ -217,49 +219,43 @@ fn analyzeLazyUnit(self: *Sema, global: *Global, lazy_unit: Compilation.Pool.Laz
 
             global.value = value;
         } else {
-            const maybe_value = if (lazy_unit.value_block) |value_block| blk: {
-                _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(value_block));
+            _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(lazy_unit.value_block.?));
 
-                break :blk self.stack.pop().?;
-            } else null;
+            const value = self.stack.pop().?;
 
-            const maybe_initializer: ?Air.Instruction = if (maybe_value) |value|
-                switch (value) {
-                    .string => |string| .{ .string = string },
-                    .int => |int| .{ .int = int },
-                    .float => |float| .{ .float = float },
-                    .boolean => |boolean| .{ .boolean = boolean },
-                    .module_id, .type_id, .function => {
-                        self.error_info = .{
-                            .message = "expected the global initializer to not be a value only available at compile time",
-                            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
-                        };
+            const initializer: Air.Instruction = switch (value) {
+                .string => |string| .{ .string = string },
+                .int => |int| .{ .int = int },
+                .float => |float| .{ .float = float },
+                .boolean => |boolean| .{ .boolean = boolean },
+                .module_id, .type_id, .function => {
+                    self.error_info = .{
+                        .message = "expected the global initializer to not be a value only available at compile time",
+                        .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
+                    };
 
-                        return error.WithMessage;
-                    },
-                    .runtime => {
-                        self.error_info = .{
-                            .message = "expected the global initializer to be known at compile time",
-                            .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
-                        };
+                    return error.WithMessage;
+                },
+                .uninitialized => |id| .{ .uninitialized = id },
+                .runtime => {
+                    self.error_info = .{
+                        .message = "expected the global initializer to be known at compile time",
+                        .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, lazy_unit.token_start),
+                    };
 
-                        return error.WithMessage;
-                    },
-                }
-            else
-                null;
+                    return error.WithMessage;
+                },
+            };
 
             const type_id = if (lazy_unit.type_block) |type_block| blk: {
                 _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(type_block));
 
                 const type_id = try self.popType(lazy_unit.token_start);
 
-                if (maybe_value) |value| {
-                    try self.checkUnaryImplicitCast(value, self.compilation.getTypeFromId(type_id), lazy_unit.token_start);
-                }
+                try self.checkUnaryImplicitCast(value, self.compilation.getTypeFromId(type_id), lazy_unit.token_start);
 
                 break :blk type_id;
-            } else try self.getTypeIdFromValue(maybe_value.?);
+            } else try self.getTypeIdFromValue(value);
 
             const @"type" = self.compilation.getTypeFromId(type_id);
 
@@ -276,7 +272,7 @@ fn analyzeLazyUnit(self: *Sema, global: *Global, lazy_unit: Compilation.Pool.Laz
 
             try self.air.variables.put(self.allocator, global.air_name, .{
                 .type_id = type_id,
-                .initializer = maybe_initializer,
+                .initializer = initializer,
             });
         }
     } else {
@@ -308,6 +304,7 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
         .float => |float| try self.analyzeFloat(float),
         .boolean => |boolean| try self.analyzeBoolean(boolean),
         .function => |function| try self.analyzeFunction(function),
+        .uninitialized => |token_start| try self.analyzeUninitialized(token_start),
 
         .void_type => try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(.void) }),
         .bool_type => try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(.bool) }),
@@ -444,6 +441,14 @@ fn analyzeBoolean(self: *Sema, boolean: bool) Error!void {
     try self.stack.append(self.allocator, .{ .boolean = boolean });
 
     try self.air_instructions.append(self.allocator, .{ .boolean = boolean });
+}
+
+fn analyzeUninitialized(self: *Sema, token_start: u32) Error!void {
+    const type_id = try self.popType(token_start);
+
+    try self.stack.append(self.allocator, .{ .uninitialized = type_id });
+
+    try self.air_instructions.append(self.allocator, .{ .uninitialized = type_id });
 }
 
 threadlocal var prng = std.Random.DefaultPrng.init(0);

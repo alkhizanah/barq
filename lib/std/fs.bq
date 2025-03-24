@@ -48,7 +48,7 @@ OpenFlags :: struct {
 open :: fn (path : []const u8, flags : OpenFlags) Handle {
     switch @target_os {
         Os.linux => {
-            posix_path : [max_path_bytes]u8;
+            posix_path := @uninitialized([max_path_bytes]u8);
 
             i : usize = 0;
 
@@ -72,7 +72,7 @@ open :: fn (path : []const u8, flags : OpenFlags) Handle {
 open_at :: fn (dir_handle : Handle, path : []const u8, flags : OpenFlags) Handle {
     switch @target_os {
         Os.linux => {
-            posix_path : [max_path_bytes]u8;
+            posix_path := @uninitialized([max_path_bytes]u8);
 
             i : usize = 0;
 

@@ -1,7 +1,7 @@
 std :: @import("std");
 
 print_entire_file :: fn (handle : Handle) {
-    chunk : [1024]u8;
+    chunk := @uninitialized([1024]u8);
 
     while true {
         n :: (&read(handle, &chunk) as *s32).*;
@@ -28,7 +28,7 @@ print_stdin_loop :: fn () {
 }
 
 print_concatenated_files :: fn (paths : [][*]const u8) {
-    flags : OpenFlags;
+    flags := @uninitialized(OpenFlags);
     flags.mode = OpenMode.read_only;
 
     i : usize = 0;

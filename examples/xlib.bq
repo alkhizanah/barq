@@ -10,7 +10,7 @@
 std :: @import("std");
 
 main :: fn () u8 @foreign("main") {
-    display :: XOpenDisplay(0 as [*]const u8);
+    display :: open_display(0 as [*]const u8);
 
     if display as usize == 0 {
         std.c.printf("failed to open display\n");
@@ -18,67 +18,67 @@ main :: fn () u8 @foreign("main") {
         return 1;
     }
 
-    root :: XDefaultRootWindow(display);
-    screen :: XDefaultScreen(display);
-    gc :: XDefaultGC(display, screen);
+    root :: default_root_window(display);
+    screen :: default_screen(display);
+    gc :: default_gc(display, screen);
 
     x : c_int = 0;
     y : c_int = 0;
     width : c_uint = 800;
     height : c_uint = 600;
     border_width : c_uint = 0;
-    depth : c_uint;
+    depth : c_uint = 0;
 
-    black_pixel :: XBlackPixel(display, screen);
+    black_pixel :: black_pixel(display, screen);
 
-    window :: XCreateSimpleWindow(display, root, x, y, width, height, border_width, 0, black_pixel);
+    window :: create_simple_window(display, root, x, y, width, height, border_width, 0, black_pixel);
 
-    XMapWindow(display, window);
+    map_window(display, window);
 
     std.c.srand(std.c.time(0 as *std.c.time_t) as c_uint);
 
     while true {
-        XGetGeometry(display, window, &root, &x, &y, &width, &height, &border_width, &depth);
+        get_geometry(display, window, &root, &x, &y, &width, &height, &border_width, &depth);
 
-        XSetForeground(display, gc, (std.c.rand() % 0xFFFFFF) as c_ulong);
+        set_foreground(display, gc, (std.c.rand() % 0xFFFFFF) as c_ulong);
 
         i : u16 = 0;
 
         while (i < 255 * 2) {
-            XDrawPoint(display, window, gc, std.c.rand() % width as c_int, std.c.rand() % height as c_int);
+            draw_point(display, window, gc, std.c.rand() % width as c_int, std.c.rand() % height as c_int);
 
             i += 1;
         }
 
-        XFlush(display);
+        flush(display);
     }
 
     return 0;
 }
 
-XDisplay :: struct {}
-XGraphicsContext :: struct {}
+Display :: struct {}
+GraphicsContext :: struct {}
 
-XID :: c_ulong;
-XWindow :: XID;
-XDrawable :: XID;
+ID :: c_ulong;
+Window :: ID;
+Drawable :: ID;
 
-XOpenDisplay :: fn (display_name : [*]const u8) *XDisplay @foreign("XOpenDisplay");
-XCloseDisplay :: fn (display : *XDisplay) @foreign("XCloseDisplay");
-XFlush :: fn (display : *XDisplay) @foreign("XFlush");
+open_display :: fn (display_name : [*]const u8) *Display @foreign("XOpenDisplay");
+close_display :: fn (display : *Display) @foreign("XCloseDisplay");
+flush :: fn (display : *Display) @foreign("XFlush");
 
-XBlackPixel :: fn (display : *XDisplay, screen : c_int) c_ulong @foreign("XBlackPixel");
+black_pixel :: fn (display : *Display, screen : c_int) c_ulong @foreign("XBlackPixel");
 
-XDefaultScreen :: fn (display : *XDisplay) c_int @foreign("XDefaultScreen");
-XDefaultRootWindow :: fn (display : *XDisplay) XWindow @foreign("XDefaultRootWindow");
-XCreateSimpleWindow :: fn (display : *XDisplay, parent : XWindow, x : c_int, y : c_int, width : c_uint, height : c_uint,
-                            border_width : c_uint, border : c_ulong, background : c_ulong) XWindow @foreign("XCreateSimpleWindow");
-XDestroyWindow :: fn (display : *XDisplay, window : XWindow) @foreign("XDestroyWindow");
-XMapWindow :: fn (display : *XDisplay, window : XWindow) @foreign("XMapWindow");
+default_screen :: fn (display : *Display) c_int @foreign("XDefaultScreen");
+default_root_window :: fn (display : *Display) Window @foreign("XDefaultRootWindow");
+create_simple_window :: fn (display : *Display, parent : Window, x : c_int, y : c_int, width : c_uint, height : c_uint,
+                            border_width : c_uint, border : c_ulong, background : c_ulong) Window @foreign("XCreateSimpleWindow");
+destroy_window :: fn (display : *Display, window : Window) @foreign("XDestroyWindow");
+map_window :: fn (display : *Display, window : Window) @foreign("XMapWindow");
 
-XDefaultGC :: fn (display : *XDisplay, screen : c_int) *XGraphicsContext @foreign("XDefaultGC");
-XSetForeground :: fn (display : *XDisplay, gc : *XGraphicsContext, foreground : c_ulong) @foreign("XSetForeground");
-XSetBackground :: fn (display : *XDisplay, gc : *XGraphicsContext, background : c_ulong) @foreign("XSetBackground");
-XDrawPoint :: fn (display : *XDisplay, drawable : XDrawable, gc : *XGraphicsContext, x : c_int, y : c_int) @foreign("XDrawPoint");
-XGetGeometry :: fn (display : *XDisplay, drawable : XDrawable, root_return : *XWindow, x_return : *c_int, y_return : *c_int,
+default_gc :: fn (display : *Display, screen : c_int) *GraphicsContext @foreign("XDefaultGC");
+set_foreground :: fn (display : *Display, gc : *GraphicsContext, foreground : c_ulong) @foreign("XSetForeground");
+set_background :: fn (display : *Display, gc : *GraphicsContext, background : c_ulong) @foreign("XSetBackground");
+draw_point :: fn (display : *Display, drawable : Drawable, gc : *GraphicsContext, x : c_int, y : c_int) @foreign("XDrawPoint");
+get_geometry :: fn (display : *Display, drawable : Drawable, root_return : *Window, x_return : *c_int, y_return : *c_int,
                     width_return : *c_uint, height_return : *c_uint, border_width_return : *c_uint, depth_return : *c_uint) @foreign("XGetGeometry");

@@ -2,7 +2,7 @@ std :: @import("../std.bq");
 Os :: std.target.Os;
 
 /// Initialized by startup code
-args : [][*]u8;
+args := @uninitialized([][*]u8);
 
 exit :: fn (status : u8) {
     switch @target_os {
