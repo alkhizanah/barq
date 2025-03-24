@@ -1,0 +1,27 @@
+std :: @import("../std.bq");
+Allocator :: std.mem.Allocator;
+AllocatorVTable :: std.mem.AllocatorVTable;
+
+c_allocator_vtable := @uninitialized(AllocatorVTable);
+
+c_allocator_init :: fn () Allocator @callconv(inline) {
+    allocator := @uninitialized(Allocator);
+    c_allocator_vtable.alloc = &c_alloc;
+    c_allocator_vtable.resize = &std.mem.allocator_no_resize;
+    c_allocator_vtable.remap = &c_remap;
+    c_allocator_vtable.free = &c_free;
+    allocator.vtable = &c_allocator_vtable;
+    return allocator;
+}
+
+c_alloc :: fn (ctx : *void, len : usize) [*]u8 {
+    return std.c.malloc(len) as [*]u8;
+}
+
+c_remap :: fn (ctx : *void, memory : []u8, new_len : usize) [*]u8 {
+    return std.c.realloc(memory.ptr as *void, new_len) as [*]u8;
+}
+
+c_free :: fn (ctx : *void, memory : []u8) void {
+    std.c.free(memory.ptr as *void);
+}

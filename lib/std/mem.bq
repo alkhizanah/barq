@@ -31,3 +31,57 @@ eql :: fn (a : []const u8, b : []const u8) bool {
 
     return true;
 }
+
+Allocator :: struct {
+    ctx : *void,
+    vtable : *const AllocatorVTable,
+}
+
+// TODO: We should support alignment
+AllocatorVTable :: struct {
+    alloc : *const fn (ctx : *void, len : usize) [*]u8,
+    resize : *const fn (ctx : *void, memory : []u8, new_len : usize) bool,
+    remap : *const fn (ctx : *void, memory : []u8, new_len : usize) [*]u8,
+    free : *const fn (ctx : *void, memory : []u8) void,
+}
+
+allocator_no_resize :: fn (
+    self : *void,
+    memory : []u8,
+    new_len : usize,
+) bool {
+    return false;
+}
+
+allocator_no_remap :: fn (
+    self : *void,
+    memory : []u8,
+    new_len : usize,
+) [*]u8 {
+    return 0 as [*]u8;
+}
+
+allocator_no_free :: fn (
+    self : *void,
+    memory : []u8,
+) void {}
+
+// TODO: This should be a polymorphic function, but the compiler still doesn't support polymorphic functions
+alloc :: fn (allocator : Allocator, len : usize) []u8 @callconv(inline) {
+    return allocator.vtable.alloc(allocator.ctx, len)[0..len];
+}
+
+// TODO: This should be a polymorphic function, but the compiler still doesn't support polymorphic functions
+resize :: fn (allocator : Allocator, memory : []u8, new_len : usize) bool @callconv(inline) {
+    return allocator.vtable.resize(allocator.ctx, memory, new_len);
+}
+
+// TODO: This should be a polymorphic function, but the compiler still doesn't support polymorphic functions
+remap :: fn (allocator : Allocator, memory : []u8, new_len : usize) []u8 @callconv(inline) {
+    return allocator.vtable.remap(allocator.ctx, memory, new_len)[0..new_len];
+}
+
+// TODO: This should be a polymorphic function, but the compiler still doesn't support polymorphic functions
+free :: fn (allocator : Allocator, memory : []u8) @callconv(inline) {
+    allocator.vtable.free(allocator.ctx, memory);
+}

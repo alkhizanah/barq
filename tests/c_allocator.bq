@@ -1,0 +1,25 @@
+std :: @import("std");
+
+memcpy :: fn (dest : []u8, src : []const u8) {
+    i : usize = 0;
+
+    while (i < dest.len) & (i < src.len) {
+        dest[i] = src[i];
+
+        i += 1;
+    }
+}
+
+main :: fn () u8 @foreign {
+    allocator :: std.heap.c_allocator_init();
+
+    message :: std.mem.alloc(allocator, 14);
+
+    memcpy(message, "Hello, World!\n");
+
+    std.c.printf("%.*s", message.len, message.ptr);
+
+    std.mem.free(allocator, message);
+
+    return 0;
+}

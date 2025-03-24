@@ -1,5 +1,6 @@
 c :: @import("std/c.bq");
 fs :: @import("std/fs.bq");
+heap :: @import("std/heap.bq");
 io :: @import("std/io.bq");
 math :: @import("std/math.bq");
 mem :: @import("std/mem.bq");

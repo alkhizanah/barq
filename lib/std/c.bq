@@ -5,3 +5,7 @@ time :: fn (timer : *time_t) time_t @foreign;
 
 srand :: fn (seed : c_uint) @foreign;
 rand :: fn () c_int @foreign;
+
+malloc :: fn (size : usize) *void @foreign;
+realloc :: fn (ptr : *void, new_size : usize) *void @foreign;
+free :: fn (ptr : *void) @foreign;
