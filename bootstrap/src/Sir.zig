@@ -16,8 +16,6 @@ const Token = @import("Token.zig");
 
 const Sir = @This();
 
-global_assembly: std.ArrayListUnmanaged(u8) = .{},
-
 blocks: std.ArrayListUnmanaged(std.ArrayListUnmanaged(Instruction)) = .{},
 
 variables: std.StringArrayHashMapUnmanaged(Variable) = .{},
@@ -323,9 +321,9 @@ pub const Parser = struct {
             .compilation = compilation,
             .file = file,
             .tokens = tokens.toOwnedSlice(),
-            .target_os_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.env.target.os.tag))),
-            .target_arch_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.env.target.cpu.arch))),
-            .target_abi_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.env.target.abi))),
+            .target_os_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.target.os.tag))),
+            .target_arch_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.target.cpu.arch))),
+            .target_abi_int_id = try compilation.putInt(@intCast(@intFromEnum(compilation.target.abi))),
         };
     }
 
@@ -564,7 +562,7 @@ pub const Parser = struct {
 
             self.advance();
 
-            unescape(self.allocator, &self.sir.global_assembly, content) catch |err| switch (err) {
+            unescape(self.allocator, &self.compilation.global_assembly, content) catch |err| switch (err) {
                 error.InvalidEscapeCharacter => {
                     self.error_info = .{ .message = "invalid escape character", .source_loc = SourceLoc.find(self.file.buffer, string_start) };
 
@@ -574,7 +572,7 @@ pub const Parser = struct {
                 inline else => |other_err| return other_err,
             };
 
-            try self.sir.global_assembly.append(self.allocator, '\n');
+            try self.compilation.global_assembly.append(self.allocator, '\n');
         }
     }
 
@@ -984,12 +982,12 @@ pub const Parser = struct {
                 try self.sir_instructions.append(self.allocator, .{ .load = name.token_start });
             }
         } else {
-            const c_char_bits = self.compilation.env.target.cTypeBitSize(.char);
+            const c_char_bits = self.compilation.target.cTypeBitSize(.char);
 
             {
                 const c_char_type_instruction: Instruction = .{
                     .int_type = .{
-                        .signedness = if (self.compilation.env.target.charSignedness() == .signed) .signed else .unsigned,
+                        .signedness = if (self.compilation.target.charSignedness() == .signed) .signed else .unsigned,
                         .bits = c_char_bits,
                     },
                 };
@@ -1002,15 +1000,15 @@ pub const Parser = struct {
             }
 
             {
-                const c_short_bits = self.compilation.env.target.cTypeBitSize(.short);
-                const c_ushort_bits = self.compilation.env.target.cTypeBitSize(.ushort);
-                const c_int_bits = self.compilation.env.target.cTypeBitSize(.int);
-                const c_uint_bits = self.compilation.env.target.cTypeBitSize(.uint);
-                const c_long_bits = self.compilation.env.target.cTypeBitSize(.long);
-                const c_ulong_bits = self.compilation.env.target.cTypeBitSize(.ulong);
-                const c_longlong_bits = self.compilation.env.target.cTypeBitSize(.longlong);
-                const c_ulonglong_bits = self.compilation.env.target.cTypeBitSize(.ulonglong);
-                const ptr_bits = self.compilation.env.target.ptrBitWidth();
+                const c_short_bits = self.compilation.target.cTypeBitSize(.short);
+                const c_ushort_bits = self.compilation.target.cTypeBitSize(.ushort);
+                const c_int_bits = self.compilation.target.cTypeBitSize(.int);
+                const c_uint_bits = self.compilation.target.cTypeBitSize(.uint);
+                const c_long_bits = self.compilation.target.cTypeBitSize(.long);
+                const c_ulong_bits = self.compilation.target.cTypeBitSize(.ulong);
+                const c_longlong_bits = self.compilation.target.cTypeBitSize(.longlong);
+                const c_ulonglong_bits = self.compilation.target.cTypeBitSize(.ulonglong);
+                const ptr_bits = self.compilation.target.ptrBitWidth();
 
                 inline for (.{ "c_uchar", "c_ushort", "c_uint", "c_ulong", "c_ulonglong", "usize" }, .{ c_char_bits, c_ushort_bits, c_uint_bits, c_ulong_bits, c_ulonglong_bits, ptr_bits }) |type_name, bits| {
                     if (std.mem.eql(u8, name.buffer, type_name)) {
@@ -1035,8 +1033,8 @@ pub const Parser = struct {
                 }
 
                 {
-                    const c_float_bits = self.compilation.env.target.cTypeBitSize(.float);
-                    const c_double_bits = self.compilation.env.target.cTypeBitSize(.double);
+                    const c_float_bits = self.compilation.target.cTypeBitSize(.float);
+                    const c_double_bits = self.compilation.target.cTypeBitSize(.double);
                     // TODO: Type `c_longdouble` requires `f80` and `f128` to be supported.
 
                     inline for (.{ "f16", "f32", "f64", "c_float", "c_double" }, .{ 16, 32, 64, c_float_bits, c_double_bits }) |type_name, bits| {
@@ -1234,9 +1232,9 @@ pub const Parser = struct {
 
         self.advance();
 
-        const string_bytes_start: u32 = @intCast(self.compilation.pool.bytes.items.len);
+        const string_bytes_start: u32 = @intCast(self.compilation.bytes.items.len);
 
-        unescape(self.allocator, &self.compilation.pool.bytes, content) catch |err| switch (err) {
+        unescape(self.allocator, &self.compilation.bytes, content) catch |err| switch (err) {
             error.InvalidEscapeCharacter => {
                 self.error_info = .{ .message = "invalid escape character", .source_loc = SourceLoc.find(self.file.buffer, string_start) };
 
@@ -1246,7 +1244,7 @@ pub const Parser = struct {
             inline else => |other_err| return other_err,
         };
 
-        const string_bytes_end: u32 = @intCast(self.compilation.pool.bytes.items.len);
+        const string_bytes_end: u32 = @intCast(self.compilation.bytes.items.len);
 
         try self.sir_instructions.append(self.allocator, .{ .string = .{ .start = string_bytes_start, .end = string_bytes_end } });
     }
@@ -1731,7 +1729,7 @@ pub const Parser = struct {
 
             try content.appendSlice(self.allocator, self.compilation.getStringFromRange(string));
 
-            self.compilation.pool.bytes.shrinkRetainingCapacity(string.start);
+            self.compilation.bytes.shrinkRetainingCapacity(string.start);
 
             try content.append(self.allocator, '\n');
         }

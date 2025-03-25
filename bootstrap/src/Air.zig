@@ -11,8 +11,6 @@ const Type = Symbol.Type;
 
 const Air = @This();
 
-global_assembly: std.ArrayListUnmanaged(u8) = .{},
-
 blocks: std.ArrayListUnmanaged(std.ArrayListUnmanaged(Instruction)) = .{},
 
 variables: std.StringArrayHashMapUnmanaged(Variable) = .{},

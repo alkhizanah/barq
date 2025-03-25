@@ -18,19 +18,8 @@ pub const RunnerKind = enum {
     none,
 };
 
-pub const CodeModel = enum {
-    default,
-    tiny,
-    small,
-    kernel,
-    medium,
-    large,
-};
-
-pub const OptimizationMode = enum {
-    debug,
-    release,
-};
+const CodeModel = Compilation.CodeModel;
+const OptimizationMode = Compilation.OptimizationMode;
 
 pub const Cli = struct {
     allocator: std.mem.Allocator,
@@ -456,7 +445,7 @@ pub const Cli = struct {
         code_model: CodeModel,
         optimization_mode: OptimizationMode,
     ) u8 {
-        var barq_lib_dir = Compilation.Environment.BarqLib.openDir() catch |err| {
+        var barq_lib_dir = Compilation.BarqLib.openDir() catch |err| {
             std.debug.print("Error: could not open the barq library directory: {s}\n", .{errorDescription(err)});
 
             return 1;
@@ -493,18 +482,21 @@ pub const Cli = struct {
             return 1;
         };
 
-        var compilation = Compilation.init(
-            self.allocator,
-            .{ .path = root_file_path, .buffer = root_file_buffer },
-            .{
-                .barq_lib = .{
-                    .dir = barq_lib_dir,
-                    .std_file = barq_lib_std_file,
-                    .std_file_path = barq_lib_std_file_path,
-                },
-                .target = target,
+        var compilation: Compilation = .{
+            .allocator = self.allocator,
+
+            .root_file = .{ .path = root_file_path, .buffer = root_file_buffer },
+
+            .barq_lib = .{
+                .dir = barq_lib_dir,
+                .std_file = barq_lib_std_file,
+                .std_file_path = barq_lib_std_file_path,
             },
-        );
+
+            .target = target,
+            .optimization_mode = optimization_mode,
+            .code_model = code_model,
+        };
 
         const compilation_file: Compilation.File = switch (runner_kind) {
             .executable => blk: {
@@ -621,7 +613,7 @@ pub const Cli = struct {
 
                 defer self.allocator.free(assembly_file_path);
 
-                compilation.emit(air, assembly_file_path, output_kind, code_model, optimization_mode) catch |err| {
+                compilation.emit(air, assembly_file_path, .assembly) catch |err| {
                     std.debug.print("Error: could not emit assembly file: {s}\n", .{errorDescription(err)});
 
                     return 1;
@@ -640,16 +632,25 @@ pub const Cli = struct {
 
                 defer self.allocator.free(object_file_path);
 
-                compilation.emit(air, object_file_path, output_kind, code_model, optimization_mode) catch |err| {
+                compilation.emit(air, object_file_path, output_kind) catch |err| {
                     std.debug.print("Error: could not emit object file: {s}\n", .{errorDescription(err)});
 
                     return 1;
                 };
 
                 if (output_kind == .executable) {
+                    const exe_file_path = std.fmt.allocPrintZ(self.allocator, "{s}{s}", .{
+                        maybe_output_file_path orelse std.fs.path.stem(root_file_path),
+                        if (maybe_output_file_path != null) "" else target.exeFileExt(),
+                    }) catch |err| {
+                        std.debug.print("Error: {s}\n", .{errorDescription(err)});
+
+                        return 1;
+                    };
+
                     const linker_exit_code = compilation.link(
                         object_file_path,
-                        maybe_output_file_path orelse std.fs.path.stem(root_file_path),
+                        exe_file_path,
                     ) catch |err| {
                         std.debug.print("Error: could not link object file: {s}\n", .{errorDescription(err)});
 

@@ -86,7 +86,7 @@ const Global = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, compilation: *Compilation, module_id: u32, air: *Air) Error!Sema {
-    const module = &compilation.pool.modules.values()[module_id];
+    const module = compilation.getModulePtrFromId(module_id);
 
     return Sema{
         .allocator = allocator,
@@ -103,10 +103,8 @@ pub fn deinit(self: *Sema) void {
 }
 
 pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
-    try self.air.global_assembly.appendSlice(self.allocator, self.sir.global_assembly.items);
-
     try self.globals.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
-    try self.compilation.pool.lazy_units.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
+    try self.compilation.lazy_units.ensureUnusedCapacity(self.allocator, @intCast(self.sir.constants.count() + self.sir.variables.count()));
 
     for (self.sir.constants.keys(), self.sir.constants.values()) |constant_name, constant| {
         const constant_air_name = try std.fmt.allocPrint(self.allocator, "{s}.{}", .{ constant_name, self.module_id });
@@ -117,7 +115,7 @@ pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
             .value = undefined,
         });
 
-        self.compilation.pool.lazy_units.putAssumeCapacity(constant_air_name, .{
+        self.compilation.lazy_units.putAssumeCapacity(constant_air_name, .{
             .owner_id = self.module_id,
             .token_start = constant.token_start,
             .value_block = constant.value_block,
@@ -133,7 +131,7 @@ pub fn hoist(self: *Sema) std.mem.Allocator.Error!void {
             .value = undefined,
         });
 
-        self.compilation.pool.lazy_units.putAssumeCapacity(variable_air_name, .{
+        self.compilation.lazy_units.putAssumeCapacity(variable_air_name, .{
             .owner_id = self.module_id,
             .token_start = variable.token_start,
             .type_block = variable.type_block,
@@ -150,8 +148,8 @@ pub fn analyze(self: *Sema) Error!void {
     for (self.sir.constants.keys()) |constant_name| {
         var global = self.globals.get(constant_name).?;
 
-        if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
-            _ = self.compilation.pool.lazy_units.remove(global.air_name);
+        if (self.compilation.lazy_units.get(global.air_name)) |lazy_unit| {
+            _ = self.compilation.lazy_units.remove(global.air_name);
 
             try self.analyzeLazyUnit(&global, lazy_unit);
 
@@ -162,8 +160,8 @@ pub fn analyze(self: *Sema) Error!void {
     for (self.sir.variables.keys()) |variable_name| {
         var global = self.globals.get(variable_name).?;
 
-        if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
-            _ = self.compilation.pool.lazy_units.remove(global.air_name);
+        if (self.compilation.lazy_units.get(global.air_name)) |lazy_unit| {
+            _ = self.compilation.lazy_units.remove(global.air_name);
 
             try self.analyzeLazyUnit(&global, lazy_unit);
 
@@ -201,7 +199,7 @@ fn popType(self: *Sema, token_start: u32) Error!u32 {
     return value.type_id;
 }
 
-fn analyzeLazyUnit(self: *Sema, global: *Global, lazy_unit: Compilation.Pool.LazyUnit) Error!void {
+fn analyzeLazyUnit(self: *Sema, global: *Global, lazy_unit: Compilation.LazyUnit) Error!void {
     if (lazy_unit.owner_id == self.module_id) {
         if (global.is_const) {
             _ = self.air.blocks.orderedRemove(try self.analyzeBlockInstructions(lazy_unit.value_block.?));
@@ -539,7 +537,7 @@ fn analyzeArrayType(self: *Sema, token_start: u32) Error!void {
     const usize_type: Type = .{
         .int = .{
             .signedness = .unsigned,
-            .bits = self.compilation.env.target.ptrBitWidth(),
+            .bits = self.compilation.target.ptrBitWidth(),
         },
     };
 
@@ -643,7 +641,7 @@ fn analyzeFunctionType(self: *Sema, function_type: Sir.Instruction.FunctionType)
     const parameter_type_ids = try self.allocator.alloc(u32, function_type.parameters_count);
 
     for (0..function_type.parameters_count) |i| {
-        parameter_type_ids[i] = try self.compilation.putType(self.compilation.getTypeFromId(try self.popType(function_type.token_start)));
+        parameter_type_ids[i] = try self.popType(function_type.token_start);
     }
 
     try self.stack.append(self.allocator, .{
@@ -886,8 +884,8 @@ fn analyzeStore(self: *Sema, token_start: u32) Error!void {
 fn analyzeGetGlobalVal(self: *Sema, maybe_global: ?*Global, name: Name) Error!void {
     const global = maybe_global orelse self.globals.getPtr(name.buffer) orelse try self.reportNotDeclared(name);
 
-    if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
-        _ = self.compilation.pool.lazy_units.remove(global.air_name);
+    if (self.compilation.lazy_units.get(global.air_name)) |lazy_unit| {
+        _ = self.compilation.lazy_units.remove(global.air_name);
 
         try self.analyzeLazyUnit(global, lazy_unit);
     }
@@ -918,10 +916,10 @@ fn analyzeSetGlobalVal(self: *Sema, name: Name) Error!void {
         return error.WithMessage;
     }
 
-    if (self.compilation.pool.lazy_units.get(global.air_name)) |lazy_unit| {
+    if (self.compilation.lazy_units.get(global.air_name)) |lazy_unit| {
         try self.analyzeLazyUnit(global, lazy_unit);
 
-        _ = self.compilation.pool.lazy_units.remove(global.air_name);
+        _ = self.compilation.lazy_units.remove(global.air_name);
     }
 
     const value = self.stack.pop().?;
@@ -1006,7 +1004,7 @@ fn analyzeGetField(self: *Sema, name: Name) Error!void {
                 try self.air_instructions.append(self.allocator, .load);
             }
 
-            const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+            const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
 
             return self.stack.append(self.allocator, .{ .runtime = try self.compilation.putType(usize_type) });
         } else if (std.mem.eql(u8, name.buffer, "ptr")) {
@@ -1144,7 +1142,7 @@ fn analyzePreGetElement(self: *Sema, token_start: u32) Error!void {
 fn analyzeGetElement(self: *Sema, token_start: u32) Error!void {
     const index = self.stack.pop().?;
 
-    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
 
     try self.checkUnaryImplicitCast(index, usize_type, token_start);
 
@@ -1174,7 +1172,7 @@ fn analyzeMakeSlice(self: *Sema, token_start: u32) Error!void {
 
     const lhs_pointer_type = if (lhs_type.getPointer()) |pointer| pointer else try self.reportNotPointer(lhs_type, token_start);
 
-    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
 
     try self.checkUnaryImplicitCast(start, usize_type, token_start);
     try self.checkUnaryImplicitCast(end, usize_type, token_start);
@@ -1293,7 +1291,7 @@ fn analyzeArithmetic(self: *Sema, comptime operation: ArithmeticOperation, token
         try self.checkIntOrFloatOrPointer(lhs_type, token_start);
         try self.checkIntOrFloatOrPointer(rhs_type, token_start);
 
-        const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+        const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
 
         if (lhs_type == .pointer and rhs_type != .pointer) {
             try self.checkUnaryImplicitCast(rhs, usize_type, token_start);
@@ -1617,7 +1615,7 @@ fn analyzeCast(self: *Sema, token_start: u32) Error!void {
 
         return error.WithMessage;
     } else if (to_type == .pointer and from_type != .pointer) {
-        const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+        const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
 
         try self.checkUnaryImplicitCast(rhs, usize_type, token_start);
     } else if (to_type == .pointer and to_type.pointer.size == .slice) {
@@ -1625,7 +1623,7 @@ fn analyzeCast(self: *Sema, token_start: u32) Error!void {
 
         return error.WithMessage;
     } else if (from_type == .pointer and to_type != .pointer) {
-        const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+        const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
 
         if (!to_type.eql(self.compilation.*, usize_type)) {
             var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
@@ -1661,10 +1659,10 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
     if (std.mem.eql(u8, file_path, "root")) return self.compilation.root_file;
 
     if (std.mem.eql(u8, file_path, "std")) {
-        const import_file = self.compilation.env.barq_lib.std_file;
-        const import_file_path = self.compilation.env.barq_lib.std_file_path;
+        const import_file = self.compilation.barq_lib.std_file;
+        const import_file_path = self.compilation.barq_lib.std_file_path;
 
-        if (self.compilation.pool.modules.contains(import_file_path)) return .{ .path = import_file_path, .buffer = "" };
+        if (self.compilation.modules.contains(import_file_path)) return .{ .path = import_file_path, .buffer = "" };
 
         const import_file_buffer = import_file.readToEndAllocOptions(
             self.allocator,
@@ -1725,7 +1723,7 @@ fn getImportFile(self: *Sema, file_path: []const u8, token_start: u32) Error!Com
 
     const import_file_path = try std.fs.path.resolve(self.allocator, &.{ parent_dir_path, file_path });
 
-    if (self.compilation.pool.modules.contains(import_file_path)) return .{ .path = import_file_path, .buffer = "" };
+    if (self.compilation.modules.contains(import_file_path)) return .{ .path = import_file_path, .buffer = "" };
 
     const import_file_buffer = import_file.readToEndAllocOptions(
         self.allocator,
@@ -1760,7 +1758,7 @@ fn analyzeImport(self: *Sema, token_start: u32) Error!void {
 
     const import_file = try self.getImportFile(file_path, token_start);
 
-    if (self.compilation.pool.modules.getIndex(import_file.path)) |module_id| {
+    if (self.compilation.modules.getIndex(import_file.path)) |module_id| {
         try self.stack.append(self.allocator, .{ .module_id = @intCast(module_id) });
     } else {
         var sir_parser = try Sir.Parser.init(self.allocator, self.compilation, import_file);

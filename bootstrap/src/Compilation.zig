@@ -19,88 +19,130 @@ const Compilation = @This();
 
 allocator: std.mem.Allocator,
 
+target: std.Target,
+
+barq_lib: BarqLib,
+
 root_file: File,
 
-env: Environment,
+optimization_mode: OptimizationMode,
 
-pool: Pool = .{},
+code_model: CodeModel,
 
-pub const Pool = struct {
-    modules: std.StringArrayHashMapUnmanaged(Module) = .{},
-    lazy_units: std.StringHashMapUnmanaged(LazyUnit) = .{},
-    types: std.AutoHashMapUnmanaged(u32, Type) = .{},
-    ints: std.AutoArrayHashMapUnmanaged(i128, void) = .{},
-    bytes: std.ArrayListUnmanaged(u8) = .{},
+global_assembly: std.ArrayListUnmanaged(u8) = .{},
 
-    pub const Module = struct {
-        file: File,
-        sir: Sir,
-        globals: *Sema.Globals,
-    };
+lazy_units: std.StringHashMapUnmanaged(LazyUnit) = .{},
+modules: std.StringArrayHashMapUnmanaged(Module) = .{},
+bytes: std.ArrayListUnmanaged(u8) = .{},
+types: std.ArrayHashMapUnmanaged(Type, void, TypeHashContext, false) = .{},
+ints: std.AutoArrayHashMapUnmanaged(i128, void) = .{},
 
-    pub const LazyUnit = struct {
-        owner_id: u32,
-        token_start: u32,
-        type_block: ?u32 = null,
-        value_block: ?u32 = null,
-    };
+pub const OptimizationMode = enum {
+    debug,
+    release,
 };
 
-pub inline fn getModulePtrFromId(self: Compilation, id: u32) *Compilation.Pool.Module {
-    return &self.pool.modules.values()[id];
-}
+pub const CodeModel = enum {
+    default,
+    tiny,
+    small,
+    kernel,
+    medium,
+    large,
+};
 
-pub inline fn putModule(self: *Compilation, module: Compilation.Pool.Module) std.mem.Allocator.Error!u32 {
-    return @intCast((try self.pool.modules.getOrPutValue(self.allocator, module.file.path, module)).index);
-}
+pub const BarqLib = struct {
+    dir: std.fs.Dir,
+    std_file: std.fs.File,
+    std_file_path: []const u8,
 
-pub inline fn ensureTypesUnusedCapacity(self: *Compilation, additional_capacity: usize) std.mem.Allocator.Error!void {
-    try self.pool.types.ensureUnusedCapacity(self.allocator, additional_capacity);
-}
+    pub fn openDir() !std.fs.Dir {
+        var self_exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
 
-pub fn hashType(self: Compilation, @"type": Type) u32 {
-    var hasher = std.hash.Wyhash.init(0);
+        const self_exe_dir_path = try std.fs.selfExeDirPath(&self_exe_dir_path_buf);
 
-    const HashWriterContext = struct {
-        hasher: *std.hash.Wyhash,
+        const self_exe_dir = try std.fs.openDirAbsolute(self_exe_dir_path, .{});
 
-        fn write(context: @This(), bytes: []const u8) error{}!usize {
-            context.hasher.update(bytes);
-            return bytes.len;
+        // We start from the executable directory, and iterate upwards
+        var dir = self_exe_dir;
+
+        var opened = false;
+
+        while (!opened) {
+            opened = true;
+
+            // We first try to open `lib/barq` directory so we differentiate between
+            // `/usr/lib` and `/usr/lib/barq` if the executable is in `/usr/bin`
+            dir = dir.openDir("lib" ++ std.fs.path.sep_str ++ "barq", .{}) catch |err| switch (err) {
+                error.FileNotFound => blk: {
+                    // Ok so we didn't find `lib/barq` let's now try the more generic `lib`
+                    break :blk dir.openDir("lib", .{}) catch |another_err| switch (another_err) {
+                        error.FileNotFound => {
+                            opened = false;
+
+                            // We still didn't find any of those, so we need to go up one directory
+                            break :blk try dir.openDir("..", .{});
+                        },
+
+                        else => return err,
+                    };
+                },
+
+                else => return err,
+            };
         }
-    };
 
-    const HashWriter = std.io.Writer(HashWriterContext, error{}, HashWriterContext.write);
+        return dir;
+    }
+};
 
-    const writer: HashWriter = .{ .context = .{ .hasher = &hasher } };
+pub const Module = struct {
+    file: File,
+    sir: Sir,
+    globals: *Sema.Globals,
+};
 
-    try @"type".format(self, writer);
+pub const LazyUnit = struct {
+    owner_id: u32,
+    token_start: u32,
+    type_block: ?u32 = null,
+    value_block: ?u32 = null,
+};
 
-    return @truncate(hasher.final());
+pub inline fn getModulePtrFromId(self: Compilation, id: u32) *Module {
+    return &self.modules.values()[id];
 }
 
-pub fn putTypeAssumeCapacity(self: *Compilation, @"type": Type) u32 {
-    const hash = self.hashType(@"type");
-    self.pool.types.putAssumeCapacity(self.allocator, hash, @"type");
-    return hash;
+pub inline fn putModule(self: *Compilation, module: Module) std.mem.Allocator.Error!u32 {
+    return @intCast((try self.modules.getOrPutValue(self.allocator, module.file.path, module)).index);
 }
+
+const TypeHashContext = struct {
+    pub fn hash(_: TypeHashContext, @"type": Type) u32 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHashStrat(&hasher, @"type", .DeepRecursive);
+        return @truncate(hasher.final());
+    }
+
+    pub fn eql(_: TypeHashContext, lhs: Type, rhs: Type, _: usize) bool {
+        return std.meta.eql(lhs, rhs);
+    }
+};
 
 pub fn putType(self: *Compilation, @"type": Type) std.mem.Allocator.Error!u32 {
-    const hash = self.hashType(@"type");
-    try self.pool.types.put(self.allocator, hash, @"type");
-    return hash;
+    return @intCast((try self.types.getOrPutContext(self.allocator, @"type", .{})).index);
 }
 
-pub inline fn getTypeFromId(self: Compilation, hash: u32) Type {
-    return self.pool.types.get(hash).?;
+pub inline fn getTypeFromId(self: Compilation, id: u32) Type {
+    return self.types.keys()[id];
 }
 
 pub inline fn putInt(self: *Compilation, int: i128) std.mem.Allocator.Error!u32 {
-    return @intCast((try self.pool.ints.getOrPut(self.allocator, int)).index);
+    return @intCast((try self.ints.getOrPut(self.allocator, int)).index);
 }
 
 pub inline fn getIntFromId(self: Compilation, id: u32) i128 {
-    return self.pool.ints.keys()[id];
+    return self.ints.keys()[id];
 }
 
 pub fn makeStringType(self: *Compilation, len: usize) std.mem.Allocator.Error!Type {
@@ -119,7 +161,7 @@ pub fn makeStringType(self: *Compilation, len: usize) std.mem.Allocator.Error!Ty
 }
 
 pub fn getStringFromRange(self: Compilation, range: Range) []const u8 {
-    return self.pool.bytes.items[range.start..range.end];
+    return self.bytes.items[range.start..range.end];
 }
 
 pub const File = struct {
@@ -127,80 +169,20 @@ pub const File = struct {
     buffer: [:0]const u8,
 };
 
-pub const Environment = struct {
-    barq_lib: BarqLib,
-    target: std.Target,
-
-    pub const BarqLib = struct {
-        dir: std.fs.Dir,
-        std_file: std.fs.File,
-        std_file_path: []const u8,
-
-        pub fn openDir() !std.fs.Dir {
-            var self_exe_dir_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-
-            const self_exe_dir_path = try std.fs.selfExeDirPath(&self_exe_dir_path_buf);
-
-            const self_exe_dir = try std.fs.openDirAbsolute(self_exe_dir_path, .{});
-
-            // We start from the executable directory, and iterate upwards
-            var dir = self_exe_dir;
-
-            var opened = false;
-
-            while (!opened) {
-                opened = true;
-
-                // We first try to open `lib/barq` directory so we differentiate between
-                // `/usr/lib` and `/usr/lib/barq` if the executable is in `/usr/bin`
-                dir = dir.openDir("lib" ++ std.fs.path.sep_str ++ "barq", .{}) catch |err| switch (err) {
-                    error.FileNotFound => blk: {
-                        // Ok so we didn't find `lib/barq` let's now try the more generic `lib`
-                        break :blk dir.openDir("lib", .{}) catch |another_err| switch (another_err) {
-                            error.FileNotFound => {
-                                opened = false;
-
-                                // We still didn't find any of those, so we need to go up one directory
-                                break :blk try dir.openDir("..", .{});
-                            },
-
-                            else => return err,
-                        };
-                    },
-
-                    else => return err,
-                };
-            }
-
-            return dir;
-        }
-    };
-};
-
-pub fn init(allocator: std.mem.Allocator, root_file: File, env: Environment) Compilation {
-    return Compilation{
-        .allocator = allocator,
-        .root_file = root_file,
-        .env = env,
-    };
-}
-
 pub fn emit(
     self: *Compilation,
     air: Air,
     output_file_path: [:0]const u8,
     output_kind: root.OutputKind,
-    code_model: root.CodeModel,
-    optimization_mode: root.OptimizationMode,
 ) std.mem.Allocator.Error!void {
     var backend = try LlvmBackend.init(self.allocator, self, air);
     defer backend.deinit();
-    try backend.emit(output_file_path, output_kind, code_model, optimization_mode);
+    try backend.emit(output_file_path, output_kind);
 }
 
 /// Link an object file into an executable file
 pub fn link(self: Compilation, object_file_path: []const u8, output_file_path: []const u8) !u8 {
-    const lld = switch (self.env.target.ofmt) {
+    const lld = switch (self.target.ofmt) {
         .coff => "lld-link",
         .elf => "ld.lld",
         .macho => "ld64.lld",

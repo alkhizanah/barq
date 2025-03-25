@@ -79,12 +79,10 @@ pub fn emit(
     self: *LlvmBackend,
     output_file_path: [:0]const u8,
     output_kind: root.OutputKind,
-    code_model: root.CodeModel,
-    optimization_mode: root.OptimizationMode,
 ) Error!void {
     try self.stack.ensureTotalCapacity(self.allocator, 255);
 
-    c.LLVMSetModuleInlineAsm2(self.module, self.air.global_assembly.items.ptr, self.air.global_assembly.items.len);
+    c.LLVMSetModuleInlineAsm2(self.module, self.compilation.global_assembly.items.ptr, self.compilation.global_assembly.items.len);
 
     try self.globals.ensureUnusedCapacity(self.allocator, @intCast(self.air.variables.count() + self.air.functions.count()));
 
@@ -104,6 +102,8 @@ pub fn emit(
         try self.unaryImplicitCast(&initializer_register, variable.type_id);
 
         _ = c.LLVMSetInitializer(llvm_pointer, initializer_register.value);
+
+        c.LLVMSetLinkage(llvm_pointer, c.LLVMInternalLinkage);
 
         self.stack.clearRetainingCapacity();
 
@@ -175,7 +175,7 @@ pub fn emit(
     c.LLVMInitializeAllAsmParsers();
     c.LLVMInitializeAllAsmPrinters();
 
-    const target = self.compilation.env.target;
+    const target = self.compilation.target;
 
     const target_triple = try llvmTargetTripleZ(self.allocator, target);
     defer self.allocator.free(target_triple);
@@ -196,12 +196,12 @@ pub fn emit(
         target_triple,
         llvm_cpu_name,
         llvm_cpu_features,
-        switch (optimization_mode) {
+        switch (self.compilation.optimization_mode) {
             .debug => c.LLVMCodeGenLevelDefault,
             .release => c.LLVMCodeGenLevelAggressive,
         },
         c.LLVMRelocPIC,
-        switch (code_model) {
+        switch (self.compilation.code_model) {
             .default => c.LLVMCodeModelDefault,
             .tiny => c.LLVMCodeModelTiny,
             .small => c.LLVMCodeModelSmall,
@@ -224,7 +224,7 @@ pub fn emit(
 
     _ = c.LLVMRunPasses(
         self.module,
-        switch (optimization_mode) {
+        switch (self.compilation.optimization_mode) {
             .debug => debug_optimization_passes,
             .release => release_optimization_passes,
         },
@@ -448,7 +448,7 @@ fn emitLoad(self: *LlvmBackend) Error!void {
 fn emitGetElementPtr(self: *LlvmBackend) Error!void {
     var index = self.stack.pop().?;
 
-    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
     const usize_type_id = try self.compilation.putType(usize_type);
 
     try self.unaryImplicitCast(&index, usize_type_id);
@@ -500,7 +500,7 @@ fn emitGetFieldPtr(self: *LlvmBackend, field_index: u32) Error!void {
             0 => try self.compilation.putType(.{
                 .int = .{
                     .signedness = .unsigned,
-                    .bits = self.compilation.env.target.ptrBitWidth(),
+                    .bits = self.compilation.target.ptrBitWidth(),
                 },
             }),
 
@@ -551,7 +551,7 @@ fn emitExtrcatField(self: *LlvmBackend, field_index: u32) Error!void {
             0 => try self.compilation.putType(.{
                 .int = .{
                     .signedness = .unsigned,
-                    .bits = self.compilation.env.target.ptrBitWidth(),
+                    .bits = self.compilation.target.ptrBitWidth(),
                 },
             }),
 
@@ -590,7 +590,7 @@ fn emitSlice(self: *LlvmBackend) Error!void {
     var end = self.stack.pop().?;
     var start = self.stack.pop().?;
 
-    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
     const usize_type_id = try self.compilation.putType(usize_type);
 
     try self.unaryImplicitCast(&end, usize_type_id);
@@ -651,7 +651,7 @@ fn emitArithmetic(self: *LlvmBackend, comptime operation: ArithmeticOperation) E
     const lhs_type = self.compilation.getTypeFromId(lhs.type_id);
     const rhs_type = self.compilation.getTypeFromId(rhs.type_id);
 
-    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.env.target.ptrBitWidth() } };
+    const usize_type: Type = .{ .int = .{ .signedness = .unsigned, .bits = self.compilation.target.ptrBitWidth() } };
 
     if (lhs_type == .pointer and rhs_type != .pointer) {
         rhs.value = try self.saneIntCast(rhs, usize_type);
@@ -864,7 +864,7 @@ fn emitInlineAssembly(self: *LlvmBackend, assembly: Air.Instruction.InlineAssemb
         if (i != assembly.clobbers.len - 1) try assembly_constraints.append(self.allocator, ',');
     }
 
-    if (self.compilation.env.target.cpu.arch.isX86()) {
+    if (self.compilation.target.cpu.arch.isX86()) {
         if (assembly_constraints.items.len != 0) try assembly_constraints.append(self.allocator, ',');
         try assembly_constraints.appendSlice(self.allocator, "~{dirflag},~{fpsr},~{flags}");
     }
@@ -1533,7 +1533,7 @@ fn llvmType(self: *LlvmBackend, @"type": Type) Error!c.LLVMTypeRef {
         .pointer => |pointer| blk: {
             if (pointer.size == .slice) {
                 var element_types: [2]c.LLVMTypeRef = .{
-                    c.LLVMIntTypeInContext(self.context, self.compilation.env.target.ptrBitWidth()),
+                    c.LLVMIntTypeInContext(self.context, self.compilation.target.ptrBitWidth()),
                     c.LLVMPointerTypeInContext(self.context, 0),
                 };
 
@@ -1658,7 +1658,7 @@ fn unaryImplicitCast(self: *LlvmBackend, lhs: *Register, to_type_id: u32) Error!
     {
         const len = self.compilation.getIntFromId(self.compilation.getTypeFromId(lhs_type.pointer.child_type_id).array.len_int_id);
 
-        const llvm_usize_type = c.LLVMIntTypeInContext(self.context, self.compilation.env.target.ptrBitWidth());
+        const llvm_usize_type = c.LLVMIntTypeInContext(self.context, self.compilation.target.ptrBitWidth());
         const llvm_len_value = c.LLVMConstInt(llvm_usize_type, @intCast(len), 0);
 
         lhs.value = try self.makeSlice(try self.llvmType(to_type), lhs.value, llvm_len_value);

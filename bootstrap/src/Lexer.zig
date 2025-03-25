@@ -4,7 +4,7 @@ const Token = @import("Token.zig");
 
 const Lexer = @This();
 
-buffer: [:0]const u8,
+buffer: [*:0]const u8,
 index: u32,
 
 pub const State = enum {
@@ -37,7 +37,7 @@ pub const State = enum {
     double_period,
 };
 
-pub fn init(buffer: [:0]const u8) Lexer {
+pub fn init(buffer: [*:0]const u8) Lexer {
     return Lexer{
         .buffer = buffer,
         .index = 0,
