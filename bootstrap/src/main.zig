@@ -46,18 +46,24 @@ pub const Cli = struct {
                 \\  {s} compile <root-file-path> [options]
                 \\
                 \\Options:
-                \\  --output <output-file-path>    -- specify the output file path
-                \\  --emit <output-kind>           -- specify the output kind
-                \\                                    [assembly, object, executable (default), none]
-                \\  --runner <runner-kind>         -- specify the runner kind
-                \\                                    [executable (default), none]
-                \\  --target <arch-os-abi>         -- specify the target query
+                \\  --output <output-file-path>     -- specify the output file path
                 \\
-                \\  --code-model <code-model>      -- specify the code model
+                \\  --emit <output-kind>            -- specify the output kind
+                \\                                    [assembly, object, executable (default), none]
+                \\
+                \\  --runner <runner-kind>          -- specify the runner kind
+                \\                                    [executable (default), none]
+                \\
+                \\  --target <arch-os-abi>          -- specify the target query
+                \\
+                \\  --cpu-model <cpu-model>         -- specify the target cpu model
+                \\
+                \\  --code-model <code-model>       -- specify the code model
                 \\                                    [default, tiny, small, kernel, medium, large]
                 \\
-                \\  --optimize <optimization-mode> -- specify the optimization mode
+                \\  --optimize <optimization-mode>  -- specify the optimization mode
                 \\                                    [debug, release]
+                \\
                 \\
             ;
         };
@@ -75,15 +81,19 @@ pub const Cli = struct {
                 \\  {s} run <root-file-path> [options] [-- [arguments]]
                 \\
                 \\Options:
-                \\  --runner <runner-kind>         -- specify the runner kind
+                \\  --runner <runner-kind>          -- specify the runner kind
                 \\                                    [executable (default), none]
-                \\  --target <arch-os-abi>         -- specify the target query
                 \\
-                \\  --code-model <code-model>     -- specify the code model
+                \\  --target <arch-os-abi>          -- specify the target query
+                \\
+                \\  --cpu-model <cpu-model>         -- specify the target cpu model
+                \\
+                \\  --code-model <code-model>       -- specify the code model
                 \\                                    [default, tiny, small, kernel, medium, large]
                 \\
-                \\  --optimize <optimization-mode> -- specify the optimization mode
+                \\  --optimize <optimization-mode>  -- specify the optimization mode
                 \\                                    [debug, release]
+                \\
                 \\
             ;
         };
@@ -134,76 +144,57 @@ pub const Cli = struct {
         };
     }
 
-    fn parseRunnerKindOption(self: Cli, raw_runner_kind: []const u8) ?RunnerKind {
-        if (std.mem.eql(u8, raw_runner_kind, "executable")) {
-            return .executable;
-        } else if (std.mem.eql(u8, raw_runner_kind, "none")) {
-            return .none;
-        } else {
-            std.debug.print(Command.Compile.usage, .{self.program});
+    fn nextArgument(
+        self: Cli,
+        comptime command_usage: []const u8,
+        comptime option_name: []const u8,
+        argument_iterator: *std.process.ArgIterator,
+    ) ?[:0]const u8 {
+        return argument_iterator.next() orelse {
+            std.debug.print(command_usage, .{self.program});
 
-            std.debug.print("Error: unrecognized runner kind: {s}\n", .{raw_runner_kind});
-
-            return null;
-        }
-    }
-
-    fn parseOutputKindOption(self: Cli, raw_output_kind: []const u8) ?OutputKind {
-        if (std.mem.eql(u8, raw_output_kind, "assembly")) {
-            return .assembly;
-        } else if (std.mem.eql(u8, raw_output_kind, "object")) {
-            return .object;
-        } else if (std.mem.eql(u8, raw_output_kind, "executable")) {
-            return .executable;
-        } else if (std.mem.eql(u8, raw_output_kind, "none")) {
-            return .none;
-        } else {
-            std.debug.print(Command.Compile.usage, .{self.program});
-
-            std.debug.print("Error: unrecognized output kind: {s}\n", .{raw_output_kind});
+            std.debug.print("Error: expected {s}\n", .{option_name});
 
             return null;
-        }
+        };
     }
 
-    fn parseCodeModelOption(self: Cli, raw_code_model: []const u8) ?CodeModel {
-        if (std.mem.eql(u8, raw_code_model, "default")) {
-            return .default;
-        } else if (std.mem.eql(u8, raw_code_model, "tiny")) {
-            return .tiny;
-        } else if (std.mem.eql(u8, raw_code_model, "small")) {
-            return .small;
-        } else if (std.mem.eql(u8, raw_code_model, "kernel")) {
-            return .kernel;
-        } else if (std.mem.eql(u8, raw_code_model, "medium")) {
-            return .medium;
-        } else if (std.mem.eql(u8, raw_code_model, "large")) {
-            return .large;
-        } else {
-            std.debug.print(Command.Compile.usage, .{self.program});
+    fn parseEnumOption(
+        self: Cli,
+        comptime T: type,
+        comptime command_usage: []const u8,
+        comptime option_name: []const u8,
+        argument_iterator: *std.process.ArgIterator,
+    ) ?T {
+        const argument = self.nextArgument(
+            command_usage,
+            option_name,
+            argument_iterator,
+        ) orelse return null;
 
-            std.debug.print("Error: unrecognized code model: {s}\n", .{raw_code_model});
+        const info = @typeInfo(T);
 
-            return null;
+        inline for (info.@"enum".fields) |enum_field| {
+            if (std.mem.eql(u8, enum_field.name, argument)) {
+                return @enumFromInt(enum_field.value);
+            }
         }
+
+        std.debug.print(Command.Compile.usage, .{self.program});
+
+        std.debug.print("Error: unrecognized {s}: {s}\n", .{ option_name, argument });
+
+        return null;
     }
 
-    fn parseOptimizeOption(self: Cli, raw_optimization_mode: []const u8) ?OptimizationMode {
-        if (std.mem.eql(u8, raw_optimization_mode, "debug")) {
-            return .debug;
-        } else if (std.mem.eql(u8, raw_optimization_mode, "release")) {
-            return .release;
-        } else {
-            std.debug.print(Command.Compile.usage, .{self.program});
+    fn parseTargetQueryOption(self: Cli, comptime command_usage: []const u8, argument_iterator: *std.process.ArgIterator) ?std.Target {
+        const argument = self.nextArgument(
+            command_usage,
+            "target query",
+            argument_iterator,
+        ) orelse return null;
 
-            std.debug.print("Error: unrecognized optimization mode: {s}\n", .{raw_optimization_mode});
-
-            return null;
-        }
-    }
-
-    fn parseTargetQueryOption(raw_target_query: []const u8) ?std.Target {
-        const target_query = std.Target.Query.parse(.{ .arch_os_abi = raw_target_query }) catch |err| {
+        const target_query = std.Target.Query.parse(.{ .arch_os_abi = argument }) catch |err| {
             std.debug.print("Error: could not parse target query: {s}\n", .{errorDescription(err)});
 
             return null;
@@ -216,88 +207,96 @@ pub const Cli = struct {
         };
     }
 
+    fn parseCpuModelOption(self: Cli, comptime command_usage: []const u8, target: std.Target, argument_iterator: *std.process.ArgIterator) ?*const std.Target.Cpu.Model {
+        const argument = self.nextArgument(
+            command_usage,
+            "cpu model",
+            argument_iterator,
+        ) orelse return null;
+
+        return target.cpu.arch.parseCpuModel(argument) catch |err| switch (err) {
+            error.UnknownCpuModel => {
+                std.debug.print("Usage: available cpu models:\n", .{});
+
+                for (target.cpu.arch.allCpuModels()) |cpu_model| {
+                    std.debug.print("\t{s}\n", .{cpu_model.name});
+                }
+
+                std.debug.print("\nError: unrecognized cpu model: {s}\n", .{argument});
+
+                return null;
+            },
+        };
+    }
+
     fn parseArguments(allocator: std.mem.Allocator, argument_iterator: *std.process.ArgIterator) ?Cli {
         var self: Cli = .{
             .allocator = allocator,
             .program = argument_iterator.next().?,
         };
 
+        var target: std.Target = builtin.target;
+        var output_kind: OutputKind = .executable;
+        var runner_kind: RunnerKind = .executable;
+        var code_model: CodeModel = .default;
+        var optimization_mode: OptimizationMode = .debug;
+
         while (argument_iterator.next()) |argument| {
             if (std.mem.eql(u8, argument, "compile")) {
-                const root_file_path = argument_iterator.next() orelse {
-                    std.debug.print(Command.Compile.usage, .{self.program});
-
-                    std.debug.print("Error: expected input file path\n", .{});
-
-                    return null;
-                };
+                const root_file_path = self.nextArgument(
+                    Command.Compile.usage,
+                    "root file path",
+                    argument_iterator,
+                ) orelse return null;
 
                 var maybe_output_file_path: ?[]const u8 = null;
-                var output_kind: OutputKind = .executable;
-                var runner_kind: RunnerKind = .executable;
-                var target: std.Target = builtin.target;
-                var code_model: CodeModel = .default;
-                var optimization_mode: OptimizationMode = .debug;
 
                 while (argument_iterator.next()) |next_argument| {
                     if (std.mem.eql(u8, next_argument, "--output")) {
-                        maybe_output_file_path = argument_iterator.next() orelse {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected output file path\n", .{});
-
-                            return null;
-                        };
+                        maybe_output_file_path = self.nextArgument(
+                            Command.Compile.usage,
+                            "output file path",
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--emit")) {
-                        if (argument_iterator.next()) |raw_output_kind| {
-                            output_kind = self.parseOutputKindOption(raw_output_kind) orelse return null;
-                        } else {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected output kind\n", .{});
-
-                            return null;
-                        }
+                        output_kind = self.parseEnumOption(
+                            OutputKind,
+                            Command.Compile.usage,
+                            "output kind",
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--runner")) {
-                        if (argument_iterator.next()) |raw_runner_kind| {
-                            runner_kind = self.parseRunnerKindOption(raw_runner_kind) orelse return null;
-                        } else {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected runner kind\n", .{});
-
-                            return null;
-                        }
+                        runner_kind = self.parseEnumOption(
+                            RunnerKind,
+                            Command.Compile.usage,
+                            "runner kind",
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--target")) {
-                        if (argument_iterator.next()) |raw_target_query| {
-                            target = parseTargetQueryOption(raw_target_query) orelse return null;
-                        } else {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected target query\n", .{});
-
-                            return null;
-                        }
+                        target = self.parseTargetQueryOption(
+                            Command.Compile.usage,
+                            argument_iterator,
+                        ) orelse return null;
+                    } else if (std.mem.eql(u8, next_argument, "--cpu-model")) {
+                        target.cpu.model = self.parseCpuModelOption(
+                            Command.Compile.usage,
+                            target,
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--code-model")) {
-                        if (argument_iterator.next()) |raw_code_model| {
-                            code_model = self.parseCodeModelOption(raw_code_model) orelse return null;
-                        } else {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected code model\n", .{});
-
-                            return null;
-                        }
+                        code_model = self.parseEnumOption(
+                            CodeModel,
+                            Command.Compile.usage,
+                            "code model",
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--optimize")) {
-                        if (argument_iterator.next()) |raw_optimization_mode| {
-                            optimization_mode = self.parseOptimizeOption(raw_optimization_mode) orelse return null;
-                        } else {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected optimization mode\n", .{});
-
-                            return null;
-                        }
+                        optimization_mode = self.parseEnumOption(
+                            OptimizationMode,
+                            Command.Compile.usage,
+                            "optimization mode",
+                            argument_iterator,
+                        ) orelse return null;
                     } else {
                         std.debug.print(Command.Compile.usage, .{self.program});
 
@@ -319,60 +318,45 @@ pub const Cli = struct {
                     },
                 };
             } else if (std.mem.eql(u8, argument, "run")) {
-                const root_file_path = argument_iterator.next() orelse {
-                    std.debug.print(Command.Run.usage, .{self.program});
-
-                    std.debug.print("Error: expected input file path\n", .{});
-
-                    return null;
-                };
-
-                var runner_kind: RunnerKind = .executable;
-                var target: std.Target = builtin.target;
-                var code_model: CodeModel = .default;
-                var optimization_mode: OptimizationMode = .debug;
+                const root_file_path = self.nextArgument(
+                    Command.Run.usage,
+                    "root file path",
+                    argument_iterator,
+                ) orelse return null;
 
                 while (argument_iterator.next()) |next_argument| {
                     if (std.mem.eql(u8, next_argument, "--runner")) {
-                        if (argument_iterator.next()) |raw_runner_kind| {
-                            runner_kind = self.parseRunnerKindOption(raw_runner_kind) orelse return null;
-                        } else {
-                            std.debug.print(Command.Run.usage, .{self.program});
-
-                            std.debug.print("Error: expected runner kind\n", .{});
-
-                            return null;
-                        }
+                        runner_kind = self.parseEnumOption(
+                            RunnerKind,
+                            Command.Run.usage,
+                            "runner kind",
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--target")) {
-                        if (argument_iterator.next()) |raw_target_query| {
-                            target = parseTargetQueryOption(raw_target_query) orelse return null;
-                        } else {
-                            std.debug.print(Command.Run.usage, .{self.program});
-
-                            std.debug.print("Error: expected target query\n", .{});
-
-                            return null;
-                        }
+                        target = self.parseTargetQueryOption(
+                            Command.Run.usage,
+                            argument_iterator,
+                        ) orelse return null;
+                    } else if (std.mem.eql(u8, next_argument, "--cpu-model")) {
+                        target.cpu.model = self.parseCpuModelOption(
+                            Command.Run.usage,
+                            target,
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--code-model")) {
-                        if (argument_iterator.next()) |raw_code_model| {
-                            code_model = self.parseCodeModelOption(raw_code_model) orelse return null;
-                        } else {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected code model\n", .{});
-
-                            return null;
-                        }
+                        code_model = self.parseEnumOption(
+                            CodeModel,
+                            Command.Run.usage,
+                            "code model",
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--optimize")) {
-                        if (argument_iterator.next()) |raw_optimization_mode| {
-                            optimization_mode = self.parseOptimizeOption(raw_optimization_mode) orelse return null;
-                        } else {
-                            std.debug.print(Command.Compile.usage, .{self.program});
-
-                            std.debug.print("Error: expected optimization mode\n", .{});
-
-                            return null;
-                        }
+                        optimization_mode = self.parseEnumOption(
+                            OptimizationMode,
+                            Command.Run.usage,
+                            "optimization mode",
+                            argument_iterator,
+                        ) orelse return null;
                     } else if (std.mem.eql(u8, next_argument, "--")) {
                         var remaining_arguments: std.ArrayListUnmanaged([]const u8) = .{};
 
