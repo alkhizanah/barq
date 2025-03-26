@@ -46,24 +46,26 @@ pub const Cli = struct {
                 \\  {s} compile <root-file-path> [options]
                 \\
                 \\Options:
-                \\  --output <output-file-path>     -- specify the output file path
+                \\  --output <output-file-path>         -- specify the output file path
                 \\
-                \\  --emit <output-kind>            -- specify the output kind
-                \\                                    [assembly, object, executable (default), none]
+                \\  --emit <output-kind>                -- specify the output kind
+                \\                                          [assembly, object, executable (default), none]
                 \\
-                \\  --runner <runner-kind>          -- specify the runner kind
-                \\                                    [executable (default), none]
+                \\  --runner <runner-kind>              -- specify the runner kind
+                \\                                          [executable (default), none]
                 \\
-                \\  --target <arch-os-abi>          -- specify the target query
+                \\  --target <arch-os-abi>              -- specify the target query
                 \\
-                \\  --cpu-model <cpu-model>         -- specify the target cpu model
+                \\  --cpu-model <cpu-model>             -- specify the target cpu model
                 \\
-                \\  --code-model <code-model>       -- specify the code model
-                \\                                    [default, tiny, small, kernel, medium, large]
+                \\  --add-cpu-features <features..>     -- add to the target cpu features (separated by commas)
+                \\  --remove-cpu-features <features..>  -- remove from the target cpu features (separated by commas)
                 \\
-                \\  --optimize <optimization-mode>  -- specify the optimization mode
-                \\                                    [debug, release]
+                \\  --code-model <code-model>           -- specify the code model
+                \\                                          [default, tiny, small, kernel, medium, large]
                 \\
+                \\  --optimize <optimization-mode>      -- specify the optimization mode
+                \\                                          [debug, release]
                 \\
             ;
         };
@@ -81,18 +83,21 @@ pub const Cli = struct {
                 \\  {s} run <root-file-path> [options] [-- [arguments]]
                 \\
                 \\Options:
-                \\  --runner <runner-kind>          -- specify the runner kind
-                \\                                    [executable (default), none]
+                \\  --runner <runner-kind>              -- specify the runner kind
+                \\                                          [executable (default), none]
                 \\
-                \\  --target <arch-os-abi>          -- specify the target query
+                \\  --target <arch-os-abi>              -- specify the target query
                 \\
-                \\  --cpu-model <cpu-model>         -- specify the target cpu model
+                \\  --cpu-model <cpu-model>             -- specify the target cpu model
                 \\
-                \\  --code-model <code-model>       -- specify the code model
-                \\                                    [default, tiny, small, kernel, medium, large]
+                \\  --add-cpu-features <features..>     -- add to the target cpu features (separated by commas)
+                \\  --remove-cpu-features <features..>  -- remove from the target cpu features (separated by commas)
                 \\
-                \\  --optimize <optimization-mode>  -- specify the optimization mode
-                \\                                    [debug, release]
+                \\  --code-model <code-model>           -- specify the code model
+                \\                                          [default, tiny, small, kernel, medium, large]
+                \\
+                \\  --optimize <optimization-mode>      -- specify the optimization mode
+                \\                                          [debug, release]
                 \\
                 \\
             ;
@@ -207,7 +212,12 @@ pub const Cli = struct {
         };
     }
 
-    fn parseCpuModelOption(self: Cli, comptime command_usage: []const u8, target: std.Target, argument_iterator: *std.process.ArgIterator) ?*const std.Target.Cpu.Model {
+    fn parseCpuModelOption(
+        self: Cli,
+        comptime command_usage: []const u8,
+        target: std.Target,
+        argument_iterator: *std.process.ArgIterator,
+    ) ?*const std.Target.Cpu.Model {
         const argument = self.nextArgument(
             command_usage,
             "cpu model",
@@ -227,6 +237,56 @@ pub const Cli = struct {
                 return null;
             },
         };
+    }
+
+    fn parseCpuFeaturesOption(
+        self: Cli,
+        comptime command_usage: []const u8,
+        comptime add: bool,
+        target: *std.Target,
+        argument_iterator: *std.process.ArgIterator,
+    ) bool {
+        const argument = self.nextArgument(
+            command_usage,
+            "cpu features",
+            argument_iterator,
+        ) orelse return false;
+
+        const all_cpu_features = target.cpu.arch.allFeaturesList();
+
+        var splitted_argument_iterator = std.mem.splitScalar(u8, argument, ',');
+
+        while (splitted_argument_iterator.next()) |splitted_argument| {
+            var reached_cpu_feature: bool = false;
+
+            for (all_cpu_features) |cpu_feature| {
+                if (std.mem.eql(u8, cpu_feature.name, splitted_argument)) {
+                    if (add) {
+                        target.cpu.features.addFeature(cpu_feature.index);
+                    } else {
+                        target.cpu.features.removeFeature(cpu_feature.index);
+                    }
+
+                    reached_cpu_feature = true;
+
+                    break;
+                }
+            }
+
+            if (!reached_cpu_feature) {
+                std.debug.print("Usage: available cpu features:\n", .{});
+
+                for (all_cpu_features) |cpu_feature| {
+                    std.debug.print("\t{s}\n", .{cpu_feature.name});
+                }
+
+                std.debug.print("\nError: unrecognized cpu feature: {s}\n", .{splitted_argument});
+
+                return false;
+            }
+        }
+
+        return true;
     }
 
     fn parseArguments(allocator: std.mem.Allocator, argument_iterator: *std.process.ArgIterator) ?Cli {
@@ -283,6 +343,20 @@ pub const Cli = struct {
                             target,
                             argument_iterator,
                         ) orelse return null;
+                    } else if (std.mem.eql(u8, next_argument, "--add-cpu-features")) {
+                        if (!self.parseCpuFeaturesOption(
+                            Command.Compile.usage,
+                            true,
+                            &target,
+                            argument_iterator,
+                        )) return null;
+                    } else if (std.mem.eql(u8, next_argument, "--remove-cpu-features")) {
+                        if (!self.parseCpuFeaturesOption(
+                            Command.Compile.usage,
+                            false,
+                            &target,
+                            argument_iterator,
+                        )) return null;
                     } else if (std.mem.eql(u8, next_argument, "--code-model")) {
                         code_model = self.parseEnumOption(
                             CodeModel,
@@ -350,6 +424,20 @@ pub const Cli = struct {
                             "code model",
                             argument_iterator,
                         ) orelse return null;
+                    } else if (std.mem.eql(u8, next_argument, "--add-cpu-features")) {
+                        if (!self.parseCpuFeaturesOption(
+                            Command.Run.usage,
+                            true,
+                            &target,
+                            argument_iterator,
+                        )) return null;
+                    } else if (std.mem.eql(u8, next_argument, "--remove-cpu-features")) {
+                        if (!self.parseCpuFeaturesOption(
+                            Command.Run.usage,
+                            false,
+                            &target,
+                            argument_iterator,
+                        )) return null;
                     } else if (std.mem.eql(u8, next_argument, "--optimize")) {
                         optimization_mode = self.parseEnumOption(
                             OptimizationMode,
