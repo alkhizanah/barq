@@ -37,6 +37,8 @@ pub const Instruction = union(enum) {
     boolean: bool,
     /// Push a value that is the representation of uninitialization, basically could be anything, the user doesn't care
     uninitialized: u32,
+    /// Push a value that is initialized using multiple values on stack
+    initialize: Initialize,
     /// Negate an integer or float on the top of the stack
     negate,
     /// Reverse a boolean from true to false and from false to true
@@ -115,6 +117,13 @@ pub const Instruction = union(enum) {
     ret,
     /// Return out of the function without a value
     ret_void,
+
+    pub const Initialize = struct {
+        type_id: u32,
+        /// If empty, then each field index is the same as the depth of the value (meaning the number of values above it in the stack)
+        field_indices: []u32,
+        values_count: u32,
+    };
 
     pub const InlineAssembly = struct {
         content: []const u8,

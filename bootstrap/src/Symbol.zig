@@ -197,6 +197,37 @@ pub const Type = union(enum) {
         };
     }
 
+    pub fn getBitSize(self: Type, compilation: Compilation) usize {
+        return switch (self) {
+            // Values that shouldn't be used in runtime
+            .void, .type, .function => 0,
+            .bool => 1,
+            .int => |info| info.bits,
+            .float => |info| info.bits,
+
+            .pointer => |info| if (info.size == .slice)
+                // Slices contain a pointer and a `usize` length value which also has the same size as the pointer
+                compilation.target.ptrBitWidth() * 2
+            else
+                compilation.target.ptrBitWidth(),
+
+            .array => |info| compilation.getTypeFromId(info.child_type_id).getBitSize(compilation) *
+                @as(usize, @intCast(compilation.getIntFromId(info.len_int_id))),
+
+            .@"struct" => |info| blk: {
+                var sum: usize = 0;
+
+                for (info.fields) |struct_field| {
+                    sum += compilation.getTypeFromId(struct_field.type_id).getBitSize(compilation);
+                }
+
+                break :blk sum;
+            },
+
+            .@"enum" => |info| compilation.getTypeFromId(info.backing_type_id).getBitSize(compilation),
+        };
+    }
+
     pub fn getPointer(self: Type) ?Type.Pointer {
         if (self != .pointer) return null;
         return self.pointer;
@@ -289,7 +320,7 @@ pub const Type = union(enum) {
                 try writer.writeAll("struct { ");
 
                 for (@"struct".fields, 0..) |field, i| {
-                    try writer.print("{s} ", .{field.name});
+                    try writer.print("{s}: ", .{field.name});
 
                     const field_type = compilation.getTypeFromId(field.type_id);
 

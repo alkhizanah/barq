@@ -118,31 +118,83 @@ pub inline fn putModule(self: *Compilation, module: Module) std.mem.Allocator.Er
 }
 
 const TypeHashContext = struct {
-    pub fn hash(_: TypeHashContext, @"type": Type) u32 {
+    compilation: *const Compilation,
+
+    pub fn hash(self: TypeHashContext, @"type": Type) u32 {
         var hasher = std.hash.Wyhash.init(0);
-        std.hash.autoHashStrat(&hasher, @"type", .DeepRecursive);
+
+        hasher.update(@tagName(@"type"));
+
+        switch (@"type") {
+            .void, .bool, .type => {},
+
+            .int => |info| std.hash.autoHashStrat(&hasher, info, .DeepRecursive),
+            .float => |info| std.hash.autoHashStrat(&hasher, info, .DeepRecursive),
+
+            .pointer => |info| {
+                const child_type = self.compilation.getTypeFromId(info.child_type_id);
+
+                std.hash.autoHashStrat(&hasher, .{
+                    info.is_const,
+                    info.size,
+                    self.hash(child_type),
+                }, .DeepRecursive);
+            },
+
+            .array => |info| {
+                const len = self.compilation.getIntFromId(info.len_int_id);
+                const child_type = self.compilation.getTypeFromId(info.child_type_id);
+
+                std.hash.autoHashStrat(&hasher, .{
+                    len,
+                    child_type,
+                }, .DeepRecursive);
+            },
+
+            .function => |info| {
+                const return_type = self.compilation.getTypeFromId(info.return_type_id);
+
+                std.hash.autoHashStrat(&hasher, .{
+                    info.is_var_args,
+                    info.calling_convention,
+                    self.hash(return_type),
+                }, .DeepRecursive);
+
+                for (info.parameter_type_ids) |parameter_type_id| {
+                    const parameter_type = self.compilation.getTypeFromId(parameter_type_id);
+                    std.hash.autoHashStrat(&hasher, self.hash(parameter_type), .DeepRecursive);
+                }
+            },
+
+            .@"struct" => |info| {
+                for (info.fields) |struct_field| {
+                    hasher.update(struct_field.name);
+
+                    const field_type = self.compilation.getTypeFromId(struct_field.type_id);
+                    std.hash.autoHashStrat(&hasher, self.hash(field_type), .DeepRecursive);
+                }
+            },
+
+            .@"enum" => |info| {
+                for (info.fields) |enum_field| {
+                    hasher.update(enum_field.name);
+
+                    const enum_field_value = self.compilation.getIntFromId(enum_field.int_id);
+                    std.hash.autoHashStrat(&hasher, enum_field_value, .DeepRecursive);
+                }
+            },
+        }
+
         return @truncate(hasher.final());
     }
 
-    pub fn eql(_: TypeHashContext, lhs: Type, rhs: Type, _: usize) bool {
-        return std.meta.eql(lhs, rhs);
+    pub fn eql(self: TypeHashContext, lhs: Type, rhs: Type, _: usize) bool {
+        return lhs.eql(self.compilation.*, rhs);
     }
 };
 
 pub fn putType(self: *Compilation, @"type": Type) std.mem.Allocator.Error!u32 {
-    return @intCast((try self.types.getOrPutContext(self.allocator, @"type", .{})).index);
-}
-
-pub inline fn getTypeFromId(self: Compilation, id: u32) Type {
-    return self.types.keys()[id];
-}
-
-pub inline fn putInt(self: *Compilation, int: i128) std.mem.Allocator.Error!u32 {
-    return @intCast((try self.ints.getOrPut(self.allocator, int)).index);
-}
-
-pub inline fn getIntFromId(self: Compilation, id: u32) i128 {
-    return self.ints.keys()[id];
+    return @intCast((try self.types.getOrPutContext(self.allocator, @"type", .{ .compilation = self })).index);
 }
 
 pub fn makeStringType(self: *Compilation, len: usize) std.mem.Allocator.Error!Type {
@@ -158,6 +210,22 @@ pub fn makeStringType(self: *Compilation, len: usize) std.mem.Allocator.Error!Ty
             }),
         },
     };
+}
+
+pub fn putStringType(self: *Compilation, len: usize) std.mem.Allocator.Error!u32 {
+    return try self.putType(try self.makeStringType(len));
+}
+
+pub inline fn getTypeFromId(self: Compilation, id: u32) Type {
+    return self.types.keys()[id];
+}
+
+pub inline fn putInt(self: *Compilation, int: i128) std.mem.Allocator.Error!u32 {
+    return @intCast((try self.ints.getOrPut(self.allocator, int)).index);
+}
+
+pub inline fn getIntFromId(self: Compilation, id: u32) i128 {
+    return self.ints.keys()[id];
 }
 
 pub fn getStringFromRange(self: Compilation, range: Range) []const u8 {

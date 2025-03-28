@@ -251,8 +251,12 @@ fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!v
     switch (air_instruction) {
         .duplicate => |maybe_stack_index| try self.stack.append(
             self.allocator,
-            if (maybe_stack_index) |stack_index| self.stack.items[stack_index] else self.stack.getLast(),
+            if (maybe_stack_index) |stack_index|
+                self.stack.items[stack_index]
+            else
+                self.stack.getLast(),
         ),
+
         .reverse => |count| std.mem.reverse(Register, self.stack.items[self.stack.items.len - count ..]),
         .pop => |count| self.stack.shrinkRetainingCapacity(self.stack.items.len - count),
 
@@ -261,6 +265,7 @@ fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!v
         .float => |float| try self.emitFloat(float),
         .boolean => |boolean| try self.emitBoolean(boolean),
         .uninitialized => |id| try self.emitUninitialized(id),
+        .initialize => |initialize| try self.emitInitialize(initialize),
 
         .negate => try self.emitNegate(),
 
@@ -319,7 +324,7 @@ fn emitInstruction(self: *LlvmBackend, air_instruction: Air.Instruction) Error!v
 fn emitString(self: *LlvmBackend, range: Range) Error!void {
     const string = self.compilation.getStringFromRange(range);
 
-    const string_type_id = try self.compilation.putType(try self.compilation.makeStringType(string.len));
+    const string_type_id = try self.compilation.putStringType(string.len);
 
     const string_z = try self.allocator.dupeZ(u8, string);
     const string_pointer = c.LLVMBuildGlobalStringPtr(self.builder, string_z, "");
@@ -365,6 +370,38 @@ fn emitUninitialized(self: *LlvmBackend, type_id: u32) Error!void {
     try self.stack.append(self.allocator, .{
         .type_id = type_id,
         .value = c.LLVMGetUndef(llvm_type),
+    });
+}
+
+fn emitInitialize(self: *LlvmBackend, initialize: Air.Instruction.Initialize) Error!void {
+    const @"type" = self.compilation.getTypeFromId(initialize.type_id);
+
+    const llvm_type = try self.llvmType(@"type");
+
+    var llvm_value = c.LLVMGetUndef(llvm_type);
+
+    const use_field_indices = initialize.field_indices.len != 0;
+
+    for (0..initialize.values_count) |i| {
+        var initialize_value = self.stack.pop().?;
+
+        const field_index = if (use_field_indices) initialize.field_indices[i] else i;
+
+        const field_type_id = if (@"type" == .@"struct")
+            @"type".@"struct".fields[field_index].type_id
+        else if (@"type" == .array)
+            @"type".array.child_type_id
+        else
+            unreachable;
+
+        try self.unaryImplicitCast(&initialize_value, field_type_id);
+
+        llvm_value = c.LLVMBuildInsertValue(self.builder, llvm_value, initialize_value.value, @intCast(field_index), "");
+    }
+
+    try self.stack.append(self.allocator, .{
+        .type_id = initialize.type_id,
+        .value = llvm_value,
     });
 }
 
@@ -927,6 +964,23 @@ fn emitCall(self: *LlvmBackend, arguments_count: usize) Error!void {
             try self.unaryImplicitCast(&argument, function_type.parameter_type_ids[i]);
         }
 
+        if (function_type.calling_convention == .c) {
+            const argument_type = self.compilation.getTypeFromId(argument.type_id);
+
+            if (argument_type == .@"struct") {
+                const struct_size = argument_type.getBitSize(self.compilation.*);
+
+                if (struct_size <= 64) {
+                    const llvm_int_type = c.LLVMIntTypeInContext(self.context, @intCast(struct_size));
+                    const llvm_int_pointer = self.saneAlloca(llvm_int_type);
+
+                    _ = c.LLVMBuildStore(self.builder, argument.value, llvm_int_pointer);
+
+                    argument.value = c.LLVMBuildLoad2(self.builder, llvm_int_type, llvm_int_pointer, "");
+                }
+            }
+        }
+
         arguments[i] = argument.value;
     }
 
@@ -953,17 +1007,34 @@ fn emitCall(self: *LlvmBackend, arguments_count: usize) Error!void {
 }
 
 fn emitParameter(self: *LlvmBackend, index: u32) Error!void {
+    const parameter_type_id = self.function_type.parameter_type_ids[index];
+
+    var llvm_value = c.LLVMGetParam(self.function_value, index);
+
+    if (self.function_type.calling_convention == .c) {
+        const parameter_type = self.compilation.getTypeFromId(self.function_type.parameter_type_ids[index]);
+
+        if (parameter_type == .@"struct") {
+            const struct_size = parameter_type.getBitSize(self.compilation.*);
+
+            if (struct_size <= 64) {
+                const llvm_parameter_type = try self.llvmType(parameter_type);
+                const llvm_struct_pointer = self.saneAlloca(llvm_parameter_type);
+
+                _ = c.LLVMBuildStore(self.builder, llvm_value, llvm_struct_pointer);
+
+                llvm_value = c.LLVMBuildLoad2(self.builder, llvm_parameter_type, llvm_struct_pointer, "");
+            }
+        }
+    }
+
     try self.stack.append(self.allocator, .{
-        .type_id = self.function_type.parameter_type_ids[index],
-        .value = c.LLVMGetParam(self.function_value, index),
+        .type_id = parameter_type_id,
+        .value = llvm_value,
     });
 }
 
-fn emitAlloca(self: *LlvmBackend, type_id: u32) Error!void {
-    const @"type" = self.compilation.getTypeFromId(type_id);
-
-    const llvm_type = try self.llvmType(@"type");
-
+fn saneAlloca(self: LlvmBackend, llvm_type: c.LLVMTypeRef) c.LLVMValueRef {
     const current_block = c.LLVMGetInsertBlock(self.builder);
     const first_block = c.LLVMGetFirstBasicBlock(self.function_value);
     const first_instruction = c.LLVMGetFirstInstruction(first_block);
@@ -976,6 +1047,16 @@ fn emitAlloca(self: *LlvmBackend, type_id: u32) Error!void {
     const llvm_pointer = c.LLVMBuildAlloca(self.builder, llvm_type, "");
 
     c.LLVMPositionBuilderAtEnd(self.builder, current_block);
+
+    return llvm_pointer;
+}
+
+fn emitAlloca(self: *LlvmBackend, type_id: u32) Error!void {
+    const @"type" = self.compilation.getTypeFromId(type_id);
+
+    const llvm_type = try self.llvmType(@"type");
+
+    const llvm_pointer = self.saneAlloca(llvm_type);
 
     try self.stack.append(self.allocator, .{
         .type_id = try self.compilation.putType(.{
@@ -1556,6 +1637,16 @@ fn llvmType(self: *LlvmBackend, @"type": Type) Error!c.LLVMTypeRef {
 
             for (function.parameter_type_ids, 0..) |parameter_type_id, i| {
                 const parameter_type = self.compilation.getTypeFromId(parameter_type_id);
+
+                if (parameter_type == .@"struct") {
+                    const struct_size = parameter_type.getBitSize(self.compilation.*);
+
+                    if (struct_size <= 64) {
+                        llvm_parameter_types[i] = c.LLVMIntTypeInContext(self.context, @intCast(struct_size));
+
+                        continue;
+                    }
+                }
 
                 llvm_parameter_types[i] = try self.llvmType(parameter_type);
             }

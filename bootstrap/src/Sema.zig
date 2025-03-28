@@ -56,8 +56,17 @@ const Value = union(enum(u8)) {
 
 fn getTypeIdFromValue(self: Sema, value: Value) std.mem.Allocator.Error!u32 {
     return switch (value) {
+        .boolean => try self.compilation.putType(.bool),
+        .module_id, .type_id => try self.compilation.putType(.type),
+        .int => |id| blk: {
+            const int = self.compilation.getIntFromId(id);
+            break :blk try self.compilation.putType(Type.intFittingRange(int, int));
+        },
+        .float => |float| try self.compilation.putType(Type.floatFittingRange(float, float)),
+        .string => |range| try self.compilation.putStringType(range.end - range.start),
+        .function => |id| self.air.functions.values()[id].type_id,
+        .uninitialized => |id| id,
         .runtime => |id| id,
-        else => try self.compilation.putType(try self.getTypeFromValue(value)),
     };
 }
 
@@ -303,6 +312,7 @@ fn analyzeInstruction(self: *Sema, instruction: Sir.Instruction) Error!void {
         .boolean => |boolean| try self.analyzeBoolean(boolean),
         .function => |function| try self.analyzeFunction(function),
         .uninitialized => |token_start| try self.analyzeUninitialized(token_start),
+        .initialize => |initialize| try self.analyzeInitialize(initialize),
 
         .void_type => try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(.void) }),
         .bool_type => try self.stack.append(self.allocator, .{ .type_id = try self.compilation.putType(.bool) }),
@@ -447,6 +457,122 @@ fn analyzeUninitialized(self: *Sema, token_start: u32) Error!void {
     try self.stack.append(self.allocator, .{ .uninitialized = type_id });
 
     try self.air_instructions.append(self.allocator, .{ .uninitialized = type_id });
+}
+
+fn analyzeInitialize(self: *Sema, initialize: Sir.Instruction.Initialize) Error!void {
+    const type_id = try self.popType(initialize.token_start);
+
+    const @"type" = self.compilation.getTypeFromId(type_id);
+
+    var field_indices: std.ArrayListUnmanaged(u32) = .{};
+
+    switch (@"type") {
+        .array => |array_type| {
+            const len = self.compilation.getIntFromId(array_type.len_int_id);
+
+            if (initialize.values_count != len) {
+                self.error_info = .{ .message = "amount of provided values does not match array length", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, initialize.token_start) };
+
+                return error.WithMessage;
+            }
+
+            if (initialize.fields.len != 0) {
+                self.error_info = .{ .message = "arrays do not support fields initialization", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, initialize.token_start) };
+
+                return error.WithMessage;
+            }
+
+            const array_child_type = self.compilation.getTypeFromId(array_type.child_type_id);
+
+            for (0..initialize.values_count) |_| {
+                const initialize_value = self.stack.pop().?;
+
+                std.mem.doNotOptimizeAway(try self.getTypeFromValue(initialize_value));
+
+                try self.checkUnaryImplicitCast(initialize_value, array_child_type, initialize.token_start);
+            }
+        },
+
+        .@"struct" => |struct_type| {
+            if (initialize.values_count != struct_type.fields.len) {
+                self.error_info = .{ .message = "amount of provided values does not match amount of struct fields", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, initialize.token_start) };
+
+                return error.WithMessage;
+            }
+
+            if (initialize.fields.len == 0) {
+                for (struct_type.fields) |struct_field| {
+                    const initialize_value = self.stack.pop().?;
+
+                    std.mem.doNotOptimizeAway(try self.getTypeFromValue(initialize_value));
+
+                    const struct_field_type = self.compilation.getTypeFromId(struct_field.type_id);
+
+                    try self.checkUnaryImplicitCast(initialize_value, struct_field_type, initialize.token_start);
+                }
+            } else {
+                try field_indices.ensureTotalCapacity(self.allocator, initialize.fields.len);
+
+                for (initialize.fields) |initialize_field_name| {
+                    const initialize_value = self.stack.pop().?;
+
+                    std.mem.doNotOptimizeAway(try self.getTypeFromValue(initialize_value));
+
+                    var maybe_field_index: ?u32 = null;
+
+                    for (struct_type.fields, 0..) |struct_field, i| {
+                        if (std.mem.eql(u8, struct_field.name, initialize_field_name.buffer)) {
+                            const struct_field_type = self.compilation.getTypeFromId(struct_field.type_id);
+
+                            try self.checkUnaryImplicitCast(initialize_value, struct_field_type, initialize.token_start);
+
+                            maybe_field_index = @intCast(i);
+
+                            break;
+                        }
+                    }
+
+                    if (maybe_field_index) |field_index| {
+                        field_indices.appendAssumeCapacity(field_index);
+                    } else {
+                        var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
+
+                        try error_message_buf.appendSlice(self.allocator, "'");
+                        try error_message_buf.appendSlice(self.allocator, initialize_field_name.buffer);
+                        try error_message_buf.appendSlice(self.allocator, "' is not a field in type '");
+                        try @"type".format(self.compilation.*, error_message_buf.writer(self.allocator));
+                        try error_message_buf.appendSlice(self.allocator, "'");
+
+                        self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, initialize.token_start) };
+
+                        return error.WithMessage;
+                    }
+                }
+            }
+        },
+
+        else => {
+            var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
+
+            try error_message_buf.appendSlice(self.allocator, "type '");
+            try @"type".format(self.compilation.*, error_message_buf.writer(self.allocator));
+            try error_message_buf.appendSlice(self.allocator, "' does not support initialization syntax");
+
+            self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, initialize.token_start) };
+
+            return error.WithMessage;
+        },
+    }
+
+    try self.stack.append(self.allocator, .{ .runtime = type_id });
+
+    try self.air_instructions.append(self.allocator, .{
+        .initialize = .{
+            .type_id = type_id,
+            .field_indices = field_indices.items,
+            .values_count = initialize.values_count,
+        },
+    });
 }
 
 threadlocal var prng = std.Random.DefaultPrng.init(0);
@@ -2121,7 +2247,7 @@ fn analyzeSwitch(self: *Sema, @"switch": Sir.Instruction.Switch) Error!void {
         };
 
         if (case_values.contains(case_value_int)) {
-            self.error_info = .{ .message = "duplcicte switch case", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, case_token_start) };
+            self.error_info = .{ .message = "duplicate switch case", .source_loc = SourceLoc.find(self.compilation.getModulePtrFromId(self.module_id).file.buffer, case_token_start) };
 
             return error.WithMessage;
         }
@@ -2303,7 +2429,7 @@ fn checkUnaryImplicitCast(self: *Sema, lhs: Value, to_type: Type, token_start: u
 
         try error_message_buf.appendSlice(self.allocator, "value of type '");
         try lhs_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
-        try error_message_buf.appendSlice(self.allocator, "' cannot be implicitly casted to  '");
+        try error_message_buf.appendSlice(self.allocator, "' cannot be implicitly casted to '");
         try to_type.format(self.compilation.*, error_message_buf.writer(self.allocator));
         try error_message_buf.append(self.allocator, '\'');
 

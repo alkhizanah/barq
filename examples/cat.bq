@@ -28,13 +28,10 @@ print_stdin_loop :: fn () {
 }
 
 print_concatenated_files :: fn (paths : [][*]const u8) {
-    flags := @uninitialized(OpenFlags);
-    flags.mode = OpenMode.read_only;
-
     i : usize = 0;
 
     while i < paths.len {
-        handle := open(span(paths[i], 0), flags);
+        handle := open(span(paths[i], 0), OpenFlags{ .mode = OpenMode.read_only });
 
         if handle < 0 {
             eprintln("error: could not open file");

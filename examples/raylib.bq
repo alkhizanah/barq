@@ -8,18 +8,18 @@
 //    i.e: `cc raylib_example.o -l:libraylib.a -lm -o raylib_example`
 
 noise :: fn () {
-    color := @uninitialized(Color);
-
     i : u8 = 0;
 
     while i < 255 {
-        color.r = get_random_value(0, 255) as c_uchar;
-        color.g = get_random_value(0, 255) as c_uchar;
-        color.b = get_random_value(0, 255) as c_uchar;
-        color.a = get_random_value(0, 255) as c_uchar;
-
         x :: get_random_value(0, get_render_width());
         y :: get_random_value(0, get_render_height());
+
+        color :: Color {
+            .r = get_random_value(0, 255) as c_uchar,
+            .g = get_random_value(0, 255) as c_uchar,
+            .b = get_random_value(0, 255) as c_uchar,
+            .a = get_random_value(0, 255) as c_uchar,
+        };
 
         draw_pixel(x, y, color);
 
@@ -43,11 +43,6 @@ main :: fn () u8 @foreign {
     closw_window();
 
     return 0;
-}
-
-Vector2 :: struct {
-    x : c_float,
-    y : c_float,
 }
 
 Color :: struct {

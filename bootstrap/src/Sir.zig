@@ -52,6 +52,8 @@ pub const Instruction = union(enum) {
     /// Push a value that is the representation of uninitialization, basically could be anything, the user doesn't care
     /// Type of this value should be on the stack
     uninitialized: u32,
+    /// Push a value that is initialized using multiple values on stack
+    initialize: Initialize,
     /// Push a void type onto the stack
     void_type,
     /// Push a bool type onto the stack
@@ -167,6 +169,22 @@ pub const Instruction = union(enum) {
     /// Return out of the function without a value
     ret_void: u32,
 
+    pub const Function = struct {
+        name: ?Name = null,
+        is_foreign: bool = false,
+        foreign_name: ?Range = null,
+        body_block: ?u32 = null,
+        token_start: u32,
+    };
+
+    pub const Initialize = struct {
+        /// If empty, then the value should be initialized using only the values on stack
+        fields: []Name,
+        /// Should match `fields.len` if not empty, otherwise should match the amount of values pushed onto the stack that the initializer can use
+        values_count: u32,
+        token_start: u32,
+    };
+
     pub const PointerType = struct {
         size: Type.Pointer.Size,
         is_const: bool,
@@ -188,14 +206,6 @@ pub const Instruction = union(enum) {
         is_var_args: bool,
         token_start: u32,
         calling_convention: Type.Function.CallingConvention,
-    };
-
-    pub const Function = struct {
-        name: ?Name = null,
-        is_foreign: bool = false,
-        foreign_name: ?Range = null,
-        body_block: ?u32 = null,
-        token_start: u32,
     };
 
     pub const InlineAssembly = struct {
@@ -426,7 +436,7 @@ pub const Parser = struct {
                 const value_block: u32 = @intCast(self.sir.blocks.items.len);
                 if (top_level) try self.sir.blocks.append(self.allocator, value_instructions);
 
-                if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
+                if (!self.eat(.semicolon) and self.tokens.items(.tag)[self.token_index - 1] != .close_brace) {
                     self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
@@ -468,7 +478,7 @@ pub const Parser = struct {
                 const value_block: u32 = @intCast(self.sir.blocks.items.len);
                 if (top_level) try self.sir.blocks.append(self.allocator, value_instructions);
 
-                if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
+                if (!self.eat(.semicolon) and self.tokens.items(.tag)[self.token_index - 1] != .close_brace) {
                     self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
@@ -504,7 +514,7 @@ pub const Parser = struct {
                 const value_block: u32 = @intCast(self.sir.blocks.items.len);
                 if (top_level) try self.sir.blocks.append(self.allocator, value_instructions);
 
-                if (self.tokens.items(.tag)[self.token_index - 1] != .close_brace and !self.eat(.semicolon)) {
+                if (!self.eat(.semicolon) and self.tokens.items(.tag)[self.token_index - 1] != .close_brace) {
                     self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
                     return error.WithMessage;
@@ -577,9 +587,7 @@ pub const Parser = struct {
     }
 
     fn parseStmt(self: *Parser, expect_semicolon: bool) Error!void {
-        const stmt_token_tag = self.tokenTag();
-
-        switch (stmt_token_tag) {
+        switch (self.tokenTag()) {
             .identifier => switch (self.tokens.items(.tag)[self.token_index + 1]) {
                 .colon, .double_colon, .colon_assign => return self.parseUnit(false),
 
@@ -609,9 +617,8 @@ pub const Parser = struct {
             },
         }
 
-        if (expect_semicolon and
-            (stmt_token_tag == .keyword_return or self.tokens.items(.tag)[self.token_index - 1] != .close_brace) and
-            !self.eat(.semicolon))
+        if (expect_semicolon and !self.eat(.semicolon) and
+            self.tokens.items(.tag)[self.token_index - 1] != .close_brace)
         {
             self.error_info = .{ .message = "expected a ';'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
 
@@ -632,7 +639,7 @@ pub const Parser = struct {
 
         self.advance();
 
-        try self.parseExpr(.lowest);
+        try self.parseExprB(.lowest);
 
         if (!self.eat(.open_brace)) {
             self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
@@ -743,7 +750,7 @@ pub const Parser = struct {
 
         self.advance();
 
-        try self.parseExpr(.lowest);
+        try self.parseExprB(.lowest);
 
         const then_block = if (self.eat(.keyword_then))
             try self.parseExprBlock(.lowest)
@@ -773,7 +780,7 @@ pub const Parser = struct {
 
         self.advance();
 
-        const condition_block = try self.parseExprBlock(.lowest);
+        const condition_block = try self.parseExprBBlock(.lowest);
 
         const previous_in_loop = in_loop;
         in_loop = true;
@@ -867,6 +874,7 @@ pub const Parser = struct {
     const Precedence = enum {
         lowest,
         assign,
+        initializer,
         bit_or,
         bit_xor,
         bit_and,
@@ -894,6 +902,7 @@ pub const Parser = struct {
                 .right_shift_assign,
                 .assign,
                 => .assign,
+                .open_brace => .initializer,
                 .less_than, .greater_than, .less_or_eql, .greater_or_eql, .eql, .not_eql => .comparison,
                 .plus, .minus => .sum,
                 .star, .divide, .modulo => .product,
@@ -916,6 +925,16 @@ pub const Parser = struct {
 
         while (@intFromEnum(Precedence.fromTokenTag(self.tokenTag())) > @intFromEnum(precedence) and
             self.tokenTag() != .semicolon and self.tokenTag() != .assign)
+        {
+            try self.parseBinaryExpr();
+        }
+    }
+
+    fn parseExprB(self: *Parser, precedence: Precedence) Error!void {
+        try self.parseUnaryExpr();
+
+        while (@intFromEnum(Precedence.fromTokenTag(self.tokenTag())) > @intFromEnum(precedence) and
+            self.tokenTag() != .semicolon and self.tokenTag() != .open_brace)
         {
             try self.parseBinaryExpr();
         }
@@ -1324,11 +1343,9 @@ pub const Parser = struct {
             const field_name = try self.parseName();
 
             if (fields.contains(field_name.buffer)) {
-                var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
+                self.error_info = .{ .message = "duplicate struct field", .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
 
-                try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in struct fields", .{field_name.buffer});
-
-                self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
+                return error.WithMessage;
             }
 
             if (!self.eat(.colon)) {
@@ -1366,7 +1383,7 @@ pub const Parser = struct {
         const infer_backing_type = self.eat(.open_brace);
 
         if (!infer_backing_type) {
-            try self.parseExpr(.lowest);
+            try self.parseExprB(.lowest);
 
             if (!self.eat(.open_brace)) {
                 self.error_info = .{ .message = "expected a '{'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
@@ -1381,11 +1398,9 @@ pub const Parser = struct {
             const field_name = try self.parseName();
 
             if (fields.contains(field_name.buffer)) {
-                var error_message_buf: std.ArrayListUnmanaged(u8) = .{};
+                self.error_info = .{ .message = "duplicate enum field", .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
 
-                try error_message_buf.writer(self.allocator).print("redeclaration of '{s}' in enum fields", .{field_name.buffer});
-
-                self.error_info = .{ .message = error_message_buf.items, .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
+                return error.WithMessage;
             }
 
             var field_int_id = if (self.tokenTag() == .assign)
@@ -1493,7 +1508,7 @@ pub const Parser = struct {
         try self.sir_instructions.append(self.allocator, .{ .comptime_reverse = @intCast(parameters.items.len) });
 
         if (self.tokenTag() != .special_identifier and self.tokenTag() != .open_brace) {
-            try self.parseExpr(.lowest);
+            try self.parseExprB(.lowest);
         } else {
             try self.sir_instructions.append(self.allocator, .void_type);
         }
@@ -1679,13 +1694,13 @@ pub const Parser = struct {
         }
 
         if (is_array) {
-            try self.parseExpr(.lowest);
+            try self.parseExprB(.lowest);
 
             try self.sir_instructions.append(self.allocator, .{ .array_type = token_start });
         } else {
             const is_const = self.eat(.keyword_const);
 
-            try self.parseExpr(.lowest);
+            try self.parseExprB(.lowest);
 
             try self.sir_instructions.append(self.allocator, .{
                 .pointer_type = .{
@@ -1914,6 +1929,8 @@ pub const Parser = struct {
             .open_paren => try self.parseCall(),
 
             .open_bracket => try self.parseSubscript(),
+
+            .open_brace => try self.parseInitializer(),
 
             .period => try self.parseFieldAccess(),
 
@@ -2168,6 +2185,76 @@ pub const Parser = struct {
         }
     }
 
+    fn parseInitializer(self: *Parser) Error!void {
+        const open_brace_start = self.tokenRange().start;
+
+        self.advance();
+
+        var fields: std.StringArrayHashMapUnmanaged(Name) = .{};
+        var values_count: u32 = 0;
+
+        if (self.tokenTag() == .period) {
+            while (!self.eat(.close_brace)) {
+                if (!self.eat(.period)) {
+                    self.error_info = .{ .message = "expected a '.'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                const field_name = try self.parseName();
+
+                if (fields.contains(field_name.buffer)) {
+                    self.error_info = .{ .message = "duplicate initialization field", .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
+
+                    return error.WithMessage;
+                }
+
+                try fields.put(self.allocator, field_name.buffer, field_name);
+
+                if (!self.eat(.assign)) {
+                    self.error_info = .{ .message = "expected a '='", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                try self.parseExpr(.lowest);
+
+                if (self.tokenTag() != .close_brace and !self.eat(.comma)) {
+                    self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                values_count += 1;
+            }
+        } else {
+            while (!self.eat(.close_brace)) {
+                try self.parseExpr(.lowest);
+
+                if (self.tokenTag() != .close_brace and !self.eat(.comma)) {
+                    self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                    return error.WithMessage;
+                }
+
+                values_count += 1;
+            }
+        }
+
+        try self.sir_instructions.appendSlice(self.allocator, &.{
+            .{ .reverse = values_count },
+            .{ .comptime_reverse = values_count },
+            .{ .comptime_reverse = values_count + 1 },
+            .{
+                .initialize = .{
+                    .fields = fields.values(),
+                    .values_count = values_count,
+                    .token_start = open_brace_start,
+                },
+            },
+        });
+    }
+
     fn parseFieldAccess(self: *Parser) Error!void {
         const period_start = self.tokenRange().start;
 
@@ -2180,6 +2267,20 @@ pub const Parser = struct {
 
             try self.sir_instructions.append(self.allocator, .{ .get_field = name });
         }
+    }
+
+    fn parseExprBBlock(self: *Parser, precdence: Precedence) Error!u32 {
+        const previous_sir_instructions = self.sir_instructions;
+        defer self.sir_instructions = previous_sir_instructions;
+
+        var block_instructions: std.ArrayListUnmanaged(Instruction) = .{};
+        self.sir_instructions = &block_instructions;
+
+        try self.parseExprB(precdence);
+
+        try self.sir.blocks.append(self.allocator, block_instructions);
+
+        return @intCast(self.sir.blocks.items.len - 1);
     }
 
     fn parseExprBlock(self: *Parser, precdence: Precedence) Error!u32 {
