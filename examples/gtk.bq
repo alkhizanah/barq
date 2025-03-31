@@ -1,0 +1,56 @@
+activate :: fn (app: *GtkApplication, user_data: gpointer) @callconv(c) {
+    window :: gtk_application_window_new(app);
+
+    gtk_window_set_title(window as *GtkWindow, "Gtk Example");
+
+    gtk_window_set_default_size(window as *GtkWindow, 800, 600);
+
+    gtk_window_present(window as *GtkWindow);
+}
+
+
+main :: fn (argc: c_int, argv: [*][*]u8) c_int @foreign {
+    app :: gtk_application_new("org.barq.gtk.example", G_APPLICATION_DEFAULT_FLAGS);
+    defer g_object_unref(app as gpointer);
+
+    g_signal_connect(app as gpointer, "activate", &activate as GCallback, 0 as gpointer);
+
+    return g_application_run(app as *GApplication, argc, argv);
+}
+
+GtkWidget :: struct {};
+GtkWindow :: struct {};
+GtkApplication :: struct {};
+GClosure :: struct {};
+GApplication :: struct {};
+gpointer :: *void;
+GCallback :: *const fn () void;
+GClosureNotify :: *const fn (data: gpointer, closure: *GClosure) void;
+
+G_APPLICATION_DEFAULT_FLAGS :: 0;
+G_CONNECT_DEFAULT   :: 0;
+
+gtk_application_new :: fn (app_id: [*]const u8, flags: u9) *GtkApplication @foreign;
+
+gtk_application_window_new :: fn (app: *GtkApplication) *GtkWidget @foreign;
+gtk_window_present :: fn (window: *GtkWindow)  @foreign;
+gtk_window_set_title :: fn (window: *GtkWindow, title: [*]const u8) @foreign;
+gtk_window_set_default_size :: fn (window: *GtkWindow, width: c_int, height: c_int) @foreign;
+
+g_object_unref :: fn (object: gpointer) @foreign;
+
+g_application_run :: fn (app: *GApplication, argc: c_int, argv: [*][*]u8) c_int @foreign;
+
+g_signal_connect_data :: fn (instance:         gpointer,
+    detailed_signal:   [*]const u8,
+    c_handler:         GCallback,
+    data:              gpointer,
+    destroy_data:      GClosureNotify,
+    connect_flags:     u2) c_ulong @foreign;
+
+g_signal_connect :: fn (instance:         gpointer,
+    detailed_signal:   [*]const u8,
+    c_handler:         GCallback,
+    data:              gpointer) c_ulong @callconv(inline) {
+    return g_signal_connect_data(instance, detailed_signal, c_handler, data, 0 as GClosureNotify, G_CONNECT_DEFAULT);
+}
