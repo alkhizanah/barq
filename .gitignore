@@ -1,3 +1,6 @@
 **/zig-out
 **/.zig-cache
 **/zig-cache
+
+/target
+rboot/target
