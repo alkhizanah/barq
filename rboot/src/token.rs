@@ -12,13 +12,7 @@ impl Token {
     }
 
     pub fn to_str<'a>(&self, buffer: &'a str) -> &'a str {
-        // SAFETY: tokens are always inside of the buffer, otherwise the lexer did not tokenize the
-        // buffer correctly, which should not happen at all in case of our program
-        unsafe {
-            buffer
-                .get(self.range.start as usize..self.range.end as usize)
-                .unwrap_unchecked()
-        }
+        &buffer[self.range.start as usize..self.range.end as usize]
     }
 }
 
@@ -108,28 +102,4 @@ pub enum Keyword {
     Asm,
     As,
     Return,
-}
-
-impl Keyword {
-    pub fn from_str(input: &str) -> Option<Keyword> {
-        match input {
-            "const" => Some(Keyword::Const),
-            "defer" => Some(Keyword::Defer),
-            "struct" => Some(Keyword::Struct),
-            "enum" => Some(Keyword::Enum),
-            "fn" => Some(Keyword::Fn),
-            "switch" => Some(Keyword::Switch),
-            "if" => Some(Keyword::If),
-            "then" => Some(Keyword::Then),
-            "else" => Some(Keyword::Else),
-            "while" => Some(Keyword::While),
-            "break" => Some(Keyword::Break),
-            "continue" => Some(Keyword::Continue),
-            "asm" => Some(Keyword::Asm),
-            "as" => Some(Keyword::As),
-            "return" => Some(Keyword::Return),
-
-            _ => None,
-        }
-    }
 }

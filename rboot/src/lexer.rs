@@ -5,20 +5,33 @@ struct Cursor<'a> {
     index: u32,
 }
 
-impl<'a> Iterator for Cursor<'a> {
+impl Iterator for Cursor<'_> {
     type Item = char;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
+        let buffer_index = self.index as usize;
+
         self.index += 1;
-        self.buffer.chars().nth(self.index as usize - 1)
+
+        if buffer_index >= self.buffer.len() {
+            None
+        } else {
+            Some(self.buffer.as_bytes()[buffer_index] as char)
+        }
     }
 }
 
-impl<'a> Cursor<'a> {
+impl Cursor<'_> {
     #[inline]
     pub fn peek(&mut self) -> Option<char> {
-        self.buffer.chars().nth(self.index as usize)
+        let buffer_index = self.index as usize;
+
+        if buffer_index >= self.buffer.len() {
+            None
+        } else {
+            Some(self.buffer.as_bytes()[buffer_index] as char)
+        }
     }
 
     pub fn next_if(&mut self, func: impl FnOnce(char) -> bool) -> Option<char> {
@@ -42,8 +55,8 @@ pub struct Lexer<'a> {
     cursor: Cursor<'a>,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(buffer: &'a str) -> Lexer<'a> {
+impl Lexer<'_> {
+    pub fn new(buffer: &'_ str) -> Lexer<'_> {
         Lexer {
             cursor: Cursor { buffer, index: 0 },
         }
@@ -72,7 +85,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
-impl<'a> Iterator for Lexer<'a> {
+impl Iterator for Lexer<'_> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -228,12 +241,24 @@ impl<'a> Iterator for Lexer<'a> {
                     .is_some()
                 {}
 
-                if let Some(keyword) = Keyword::from_str(
-                    &self.cursor.buffer[start as usize..self.cursor.index as usize],
-                ) {
-                    TokenKind::Keyword(keyword)
-                } else {
-                    TokenKind::Identifier
+                match &self.cursor.buffer[start as usize..self.cursor.index as usize] {
+                    "const" => TokenKind::Keyword(Keyword::Const),
+                    "defer" => TokenKind::Keyword(Keyword::Defer),
+                    "struct" => TokenKind::Keyword(Keyword::Struct),
+                    "enum" => TokenKind::Keyword(Keyword::Enum),
+                    "fn" => TokenKind::Keyword(Keyword::Fn),
+                    "switch" => TokenKind::Keyword(Keyword::Switch),
+                    "if" => TokenKind::Keyword(Keyword::If),
+                    "then" => TokenKind::Keyword(Keyword::Then),
+                    "else" => TokenKind::Keyword(Keyword::Else),
+                    "while" => TokenKind::Keyword(Keyword::While),
+                    "break" => TokenKind::Keyword(Keyword::Break),
+                    "continue" => TokenKind::Keyword(Keyword::Continue),
+                    "asm" => TokenKind::Keyword(Keyword::Asm),
+                    "as" => TokenKind::Keyword(Keyword::As),
+                    "return" => TokenKind::Keyword(Keyword::Return),
+
+                    _ => TokenKind::Identifier,
                 }
             }
 
@@ -300,6 +325,7 @@ impl<'a> Iterator for Lexer<'a> {
     }
 }
 
+#[cfg(test)]
 mod test {
     use super::{Lexer, TokenKind};
 
