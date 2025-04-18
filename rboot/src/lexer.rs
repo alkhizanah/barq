@@ -1,6 +1,6 @@
 use crate::token::*;
 
-struct Cursor<'a> {
+pub struct Cursor<'a> {
     buffer: &'a str,
     index: u32,
 }
@@ -53,60 +53,87 @@ impl Cursor<'_> {
 
 pub struct Lexer<'a> {
     cursor: Cursor<'a>,
+    prev_token: Option<Token>,
+    peek_token: Option<Token>,
 }
 
 impl Lexer<'_> {
-    pub fn new(buffer: &'_ str) -> Lexer<'_> {
+    pub const fn new(buffer: &'_ str) -> Lexer<'_> {
         Lexer {
             cursor: Cursor { buffer, index: 0 },
+            prev_token: None,
+            peek_token: None,
         }
     }
 
     #[inline]
-    pub fn peek(&mut self) -> Option<Token> {
-        let prev_index = self.cursor.index;
-        let token = self.next();
-        self.cursor.index = prev_index;
+    pub fn prev(&self) -> Option<Token> {
+        self.prev_token
+    }
+
+    #[inline]
+    pub fn back_to(&mut self, index: TokenIdx) {
+        self.prev_token = None;
+        self.peek_token = None;
+
+        self.cursor.index = index;
+    }
+
+    #[inline]
+    pub fn peek(&mut self) -> Token {
+        if let Some(token) = self.peek_token {
+            token
+        } else {
+            let token = self.next_token();
+            self.peek_token = Some(token);
+            token
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    #[inline]
+    pub fn next(&mut self) -> Token {
+        let token = self.peek_token.take().unwrap_or_else(|| self.next_token());
+        self.prev_token = Some(token);
         token
     }
 
+    #[inline]
     pub fn next_if(&mut self, func: impl FnOnce(Token) -> bool) -> Option<Token> {
-        if let Some(token) = self.peek() {
-            if func(token) {
-                return self.next();
-            }
+        if func(self.peek()) {
+            return Some(self.next());
         }
 
         None
     }
 
+    #[inline]
     pub fn next_if_eq(&mut self, expected: TokenKind) -> Option<Token> {
         self.next_if(|next| next.kind == expected)
     }
-}
 
-impl Iterator for Lexer<'_> {
-    type Item = Token;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next_token(&mut self) -> Token {
         while self.cursor.next_if(|x| x.is_whitespace()).is_some() {}
 
-        let start = self.cursor.index;
+        let mut start = self.cursor.index;
+        let mut modified_end = None;
 
-        let ch = self.cursor.next()?;
+        let Some(ch) = self.cursor.next() else {
+            return Token::new(TokenKind::Eof, TokenRange::new(start, start));
+        };
 
         let kind = match ch {
-            '(' => TokenKind::OpenParen,
-            ')' => TokenKind::CloseParen,
-            '{' => TokenKind::OpenBrace,
-            '}' => TokenKind::CloseBrace,
-            '[' => TokenKind::OpenBracket,
-            ']' => TokenKind::CloseBracket,
-            '~' => TokenKind::Bitwise(Bitwise::Not),
-            ',' => TokenKind::Comma,
-            ';' => TokenKind::Semicolon,
+            | '(' => TokenKind::OpenParen,
+            | ')' => TokenKind::CloseParen,
+            | '{' => TokenKind::OpenBrace,
+            | '}' => TokenKind::CloseBrace,
+            | '[' => TokenKind::OpenBracket,
+            | ']' => TokenKind::CloseBracket,
+            | ':' => TokenKind::Colon,
+            | ',' => TokenKind::Comma,
+            | ';' => TokenKind::Semicolon,
 
-            '.' => {
+            | '.' => {
                 if self.cursor.next_if_eq('.').is_some() {
                     if self.cursor.next_if_eq('.').is_some() {
                         TokenKind::TriplePeriod
@@ -118,123 +145,119 @@ impl Iterator for Lexer<'_> {
                 }
             }
 
-            '=' => {
+            | '=' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::None)
+                    TokenKind::Comparison(Comparison::Eql)
+                } else if self.cursor.next_if_eq('>').is_some() {
+                    TokenKind::FatArrow
                 } else {
-                    TokenKind::Eql
+                    TokenKind::Assign(None)
                 }
             }
 
-            '!' => {
+            | '!' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::NotEql
+                    TokenKind::Comparison(Comparison::NotEql)
                 } else {
                     TokenKind::Boolwise(Boolwise::Not)
                 }
             }
 
-            '<' => {
+            | '<' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::LessOrEql
+                    TokenKind::Comparison(Comparison::LessOrEql)
                 } else if self.cursor.next_if_eq('<').is_some() {
                     if self.cursor.next_if_eq('=').is_some() {
-                        TokenKind::Assign(Assign::LeftShift)
+                        TokenKind::Assign(Some(Operator::LeftShift))
                     } else {
-                        TokenKind::LeftShift
+                        TokenKind::Operator(Operator::LeftShift)
                     }
                 } else {
-                    TokenKind::LessThan
+                    TokenKind::Comparison(Comparison::LessThan)
                 }
             }
 
-            '>' => {
+            | '>' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::GreaterOrEql
+                    TokenKind::Comparison(Comparison::GreaterOrEql)
                 } else if self.cursor.next_if_eq('>').is_some() {
                     if self.cursor.next_if_eq('=').is_some() {
-                        TokenKind::Assign(Assign::RightShift)
+                        TokenKind::Assign(Some(Operator::RightShift))
                     } else {
-                        TokenKind::RightShift
+                        TokenKind::Operator(Operator::RightShift)
                     }
                 } else {
-                    TokenKind::GreaterThan
+                    TokenKind::Comparison(Comparison::GreaterThan)
                 }
             }
 
-            '+' => {
+            | '+' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Plus)
+                    TokenKind::Assign(Some(Operator::Plus))
                 } else {
-                    TokenKind::Plus
+                    TokenKind::Operator(Operator::Plus)
                 }
             }
 
-            '-' => {
+            | '-' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Minus)
+                    TokenKind::Assign(Some(Operator::Minus))
                 } else {
-                    TokenKind::Minus
+                    TokenKind::Operator(Operator::Minus)
                 }
             }
 
-            '*' => {
+            | '*' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Star)
+                    TokenKind::Assign(Some(Operator::Multiply))
                 } else {
-                    TokenKind::Star
+                    TokenKind::Operator(Operator::Multiply)
                 }
             }
 
-            '/' => {
+            | '/' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Divide)
+                    TokenKind::Assign(Some(Operator::Divide))
                 } else {
-                    TokenKind::Divide
+                    TokenKind::Operator(Operator::Divide)
                 }
             }
 
-            '%' => {
+            | '%' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Modulo)
+                    TokenKind::Assign(Some(Operator::Modulo))
                 } else {
-                    TokenKind::Modulo
+                    TokenKind::Operator(Operator::Modulo)
                 }
             }
 
-            '&' => {
+            | '~' => TokenKind::Operator(Operator::Bitwise(Bitwise::Not)),
+
+            | '&' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Bitwise(Bitwise::And))
+                    TokenKind::Assign(Some(Operator::Bitwise(Bitwise::And)))
                 } else {
-                    TokenKind::Bitwise(Bitwise::And)
+                    TokenKind::Operator(Operator::Bitwise(Bitwise::And))
                 }
             }
 
-            '|' => {
+            | '|' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Bitwise(Bitwise::Or))
+                    TokenKind::Assign(Some(Operator::Bitwise(Bitwise::Or)))
                 } else {
-                    TokenKind::Bitwise(Bitwise::Or)
+                    TokenKind::Operator(Operator::Bitwise(Bitwise::Or))
                 }
             }
 
-            '^' => {
+            | '^' => {
                 if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Assign::Bitwise(Bitwise::Xor))
+                    TokenKind::Assign(Some(Operator::Bitwise(Bitwise::Xor)))
                 } else {
-                    TokenKind::Bitwise(Bitwise::Xor)
+                    TokenKind::Operator(Operator::Bitwise(Bitwise::Xor))
                 }
             }
 
-            ':' => {
-                if self.cursor.next_if_eq(':').is_some() {
-                    TokenKind::DoubleColon
-                } else {
-                    TokenKind::Colon
-                }
-            }
-
-            'a'..='z' | 'A'..='Z' | '_' => {
+            | 'a'..='z' | 'A'..='Z' | '_' => {
                 while self
                     .cursor
                     .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9'))
@@ -242,27 +265,27 @@ impl Iterator for Lexer<'_> {
                 {}
 
                 match &self.cursor.buffer[start as usize..self.cursor.index as usize] {
-                    "const" => TokenKind::Keyword(Keyword::Const),
-                    "defer" => TokenKind::Keyword(Keyword::Defer),
-                    "struct" => TokenKind::Keyword(Keyword::Struct),
-                    "enum" => TokenKind::Keyword(Keyword::Enum),
-                    "fn" => TokenKind::Keyword(Keyword::Fn),
-                    "switch" => TokenKind::Keyword(Keyword::Switch),
-                    "if" => TokenKind::Keyword(Keyword::If),
-                    "then" => TokenKind::Keyword(Keyword::Then),
-                    "else" => TokenKind::Keyword(Keyword::Else),
-                    "while" => TokenKind::Keyword(Keyword::While),
-                    "break" => TokenKind::Keyword(Keyword::Break),
-                    "continue" => TokenKind::Keyword(Keyword::Continue),
-                    "asm" => TokenKind::Keyword(Keyword::Asm),
-                    "as" => TokenKind::Keyword(Keyword::As),
-                    "return" => TokenKind::Keyword(Keyword::Return),
+                    | "const" => TokenKind::Keyword(Keyword::Const),
+                    | "defer" => TokenKind::Keyword(Keyword::Defer),
+                    | "struct" => TokenKind::Keyword(Keyword::Struct),
+                    | "enum" => TokenKind::Keyword(Keyword::Enum),
+                    | "fn" => TokenKind::Keyword(Keyword::Fn),
+                    | "switch" => TokenKind::Keyword(Keyword::Switch),
+                    | "if" => TokenKind::Keyword(Keyword::If),
+                    | "then" => TokenKind::Keyword(Keyword::Then),
+                    | "else" => TokenKind::Keyword(Keyword::Else),
+                    | "while" => TokenKind::Keyword(Keyword::While),
+                    | "break" => TokenKind::Keyword(Keyword::Break),
+                    | "continue" => TokenKind::Keyword(Keyword::Continue),
+                    | "asm" => TokenKind::Keyword(Keyword::Asm),
+                    | "as" => TokenKind::Keyword(Keyword::As),
+                    | "return" => TokenKind::Keyword(Keyword::Return),
 
-                    _ => TokenKind::Identifier,
+                    | _ => TokenKind::Identifier,
                 }
             }
 
-            '@' => {
+            | '@' => {
                 while self
                     .cursor
                     .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9'))
@@ -270,34 +293,40 @@ impl Iterator for Lexer<'_> {
                 {}
 
                 if self.cursor.index > start {
+                    start += 1;
+
                     TokenKind::SpecialIdentifier
                 } else {
                     TokenKind::Invalid
                 }
             }
 
-            '"' | '\'' => {
-                while let Some(nch) = self.cursor.next_if(|x| x != ch) {
-                    if nch == '\\' && self.cursor.peek() == Some(ch) {
-                        self.cursor.index += 1;
+            | '"' | '\'' => {
+                let mut unescaping = false;
+
+                while let Some(nch) = self.cursor.next_if(|x| unescaping || x != ch) {
+                    if unescaping {
+                        unescaping = false;
+                    } else if nch == '\\' {
+                        unescaping = true;
                     }
                 }
 
                 if self.cursor.next() != Some(ch) {
                     TokenKind::Invalid
                 } else {
-                    return Some(Token::new(
-                        if ch == '"' {
-                            TokenKind::StringLiteral
-                        } else {
-                            TokenKind::CharLiteral
-                        },
-                        (start + 1)..(self.cursor.index - 1),
-                    ));
+                    start += 1;
+                    modified_end = Some(self.cursor.index - 1);
+
+                    if ch == '"' {
+                        TokenKind::StringLiteral
+                    } else {
+                        TokenKind::CharLiteral
+                    }
                 }
             }
 
-            '0'..='9' => {
+            | '0'..='9' => {
                 let mut kind = TokenKind::Int;
 
                 while let Some(ch) = self
@@ -318,10 +347,12 @@ impl Iterator for Lexer<'_> {
                 kind
             }
 
-            _ => TokenKind::Invalid,
+            | _ => TokenKind::Invalid,
         };
 
-        Some(Token::new(kind, start..self.cursor.index))
+        let range = TokenRange::new(start, modified_end.unwrap_or(self.cursor.index));
+
+        Token::new(kind, range)
     }
 }
 
@@ -333,26 +364,24 @@ mod test {
     fn tokenize_identifiers() {
         let mut lexer = Lexer::new("Hello HelloWorld @THIS_IS_SPECIAL HELLO_WORLD HELl0_WORLD");
 
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Identifier);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Identifier);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::SpecialIdentifier);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Identifier);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Identifier);
-
-        assert_eq!(lexer.next(), None);
+        assert_eq!(lexer.next().kind, TokenKind::Identifier);
+        assert_eq!(lexer.next().kind, TokenKind::Identifier);
+        assert_eq!(lexer.next().kind, TokenKind::SpecialIdentifier);
+        assert_eq!(lexer.next().kind, TokenKind::Identifier);
+        assert_eq!(lexer.next().kind, TokenKind::Identifier);
+        assert_eq!(lexer.next().kind, TokenKind::Eof);
     }
 
     #[test]
     fn tokenize_numbers() {
         let mut lexer = Lexer::new("0x10 2.9 6..9");
 
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Int);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Float);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Int);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::DoublePeriod);
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::Int);
-
-        assert_eq!(lexer.next(), None);
+        assert_eq!(lexer.next().kind, TokenKind::Int);
+        assert_eq!(lexer.next().kind, TokenKind::Float);
+        assert_eq!(lexer.next().kind, TokenKind::Int);
+        assert_eq!(lexer.next().kind, TokenKind::DoublePeriod);
+        assert_eq!(lexer.next().kind, TokenKind::Int);
+        assert_eq!(lexer.next().kind, TokenKind::Eof);
     }
 
     #[test]
@@ -361,21 +390,18 @@ mod test {
 
         let mut lexer = Lexer::new(buffer);
 
-        assert_eq!(lexer.peek().unwrap().to_str(buffer), "Hello World");
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::StringLiteral);
+        assert_eq!(lexer.peek().range.get(buffer), "Hello World");
+        assert_eq!(lexer.next().kind, TokenKind::StringLiteral);
 
-        assert_eq!(lexer.peek().unwrap().to_str(buffer), "H");
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::CharLiteral);
+        assert_eq!(lexer.peek().range.get(buffer), "H");
+        assert_eq!(lexer.next().kind, TokenKind::CharLiteral);
 
-        assert_eq!(lexer.peek().unwrap().to_str(buffer), "Hello");
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::StringLiteral);
+        assert_eq!(lexer.peek().range.get(buffer), "Hello");
+        assert_eq!(lexer.next().kind, TokenKind::StringLiteral);
 
-        // You might wonder why it is \' and not ' directly, because this is not parsing, the
-        // escaping is not handled yet, we are here just testing that it should not stop if the '
-        // is escaped using \
-        assert_eq!(lexer.peek().unwrap().to_str(buffer), "\\'");
-        assert_eq!(lexer.next().unwrap().kind, TokenKind::CharLiteral);
+        assert_eq!(lexer.peek().range.get(buffer), "\\'");
+        assert_eq!(lexer.next().kind, TokenKind::CharLiteral);
 
-        assert_eq!(lexer.next(), None);
+        assert_eq!(lexer.next().kind, TokenKind::Eof);
     }
 }
