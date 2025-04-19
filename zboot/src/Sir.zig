@@ -874,7 +874,6 @@ pub const Parser = struct {
     const Precedence = enum {
         lowest,
         assign,
-        initializer,
         bit_or,
         bit_xor,
         bit_and,
@@ -902,7 +901,6 @@ pub const Parser = struct {
                 .right_shift_assign,
                 .assign,
                 => .assign,
-                .open_brace => .initializer,
                 .less_than, .greater_than, .less_or_eql, .greater_or_eql, .eql, .not_eql => .comparison,
                 .plus, .minus => .sum,
                 .star, .divide, .modulo => .product,
@@ -1722,6 +1720,76 @@ pub const Parser = struct {
 
             return error.WithMessage;
         }
+
+        if (self.tokenTag() == .open_bracket) {
+            const open_bracket_start = self.tokenRange().start;
+
+            self.advance();
+
+            var fields: std.StringArrayHashMapUnmanaged(Name) = .{};
+            var values_count: u32 = 0;
+
+            if (self.tokenTag() == .period) {
+                while (!self.eat(.close_bracket)) {
+                    if (!self.eat(.period)) {
+                        self.error_info = .{ .message = "expected a '.'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                        return error.WithMessage;
+                    }
+
+                    const field_name = try self.parseName();
+
+                    if (fields.contains(field_name.buffer)) {
+                        self.error_info = .{ .message = "duplicate initialization field", .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
+
+                        return error.WithMessage;
+                    }
+
+                    try fields.put(self.allocator, field_name.buffer, field_name);
+
+                    if (!self.eat(.assign)) {
+                        self.error_info = .{ .message = "expected a '='", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                        return error.WithMessage;
+                    }
+
+                    try self.parseExpr(.lowest);
+
+                    if (self.tokenTag() != .close_bracket and !self.eat(.comma)) {
+                        self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                        return error.WithMessage;
+                    }
+
+                    values_count += 1;
+                }
+            } else {
+                while (!self.eat(.close_bracket)) {
+                    try self.parseExpr(.lowest);
+
+                    if (self.tokenTag() != .close_bracket and !self.eat(.comma)) {
+                        self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
+
+                        return error.WithMessage;
+                    }
+
+                    values_count += 1;
+                }
+            }
+
+            try self.sir_instructions.appendSlice(self.allocator, &.{
+                .{ .reverse = values_count },
+                .{ .comptime_reverse = values_count },
+                .{ .comptime_reverse = values_count + 1 },
+                .{
+                    .initialize = .{
+                        .fields = fields.values(),
+                        .values_count = values_count,
+                        .token_start = open_bracket_start,
+                    },
+                },
+            });
+        }
     }
 
     fn parseInlineAssembly(self: *Parser) Error!void {
@@ -1929,8 +1997,6 @@ pub const Parser = struct {
             .open_paren => try self.parseCall(),
 
             .open_bracket => try self.parseSubscript(),
-
-            .open_brace => try self.parseInitializer(),
 
             .period => try self.parseFieldAccess(),
 
@@ -2183,76 +2249,6 @@ pub const Parser = struct {
         if (!slicing) {
             try self.sir_instructions.append(self.allocator, .{ .get_element = open_bracket_start });
         }
-    }
-
-    fn parseInitializer(self: *Parser) Error!void {
-        const open_brace_start = self.tokenRange().start;
-
-        self.advance();
-
-        var fields: std.StringArrayHashMapUnmanaged(Name) = .{};
-        var values_count: u32 = 0;
-
-        if (self.tokenTag() == .period) {
-            while (!self.eat(.close_brace)) {
-                if (!self.eat(.period)) {
-                    self.error_info = .{ .message = "expected a '.'", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
-
-                    return error.WithMessage;
-                }
-
-                const field_name = try self.parseName();
-
-                if (fields.contains(field_name.buffer)) {
-                    self.error_info = .{ .message = "duplicate initialization field", .source_loc = SourceLoc.find(self.file.buffer, field_name.token_start) };
-
-                    return error.WithMessage;
-                }
-
-                try fields.put(self.allocator, field_name.buffer, field_name);
-
-                if (!self.eat(.assign)) {
-                    self.error_info = .{ .message = "expected a '='", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
-
-                    return error.WithMessage;
-                }
-
-                try self.parseExpr(.lowest);
-
-                if (self.tokenTag() != .close_brace and !self.eat(.comma)) {
-                    self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
-
-                    return error.WithMessage;
-                }
-
-                values_count += 1;
-            }
-        } else {
-            while (!self.eat(.close_brace)) {
-                try self.parseExpr(.lowest);
-
-                if (self.tokenTag() != .close_brace and !self.eat(.comma)) {
-                    self.error_info = .{ .message = "expected a ','", .source_loc = SourceLoc.find(self.file.buffer, self.tokenRange().start) };
-
-                    return error.WithMessage;
-                }
-
-                values_count += 1;
-            }
-        }
-
-        try self.sir_instructions.appendSlice(self.allocator, &.{
-            .{ .reverse = values_count },
-            .{ .comptime_reverse = values_count },
-            .{ .comptime_reverse = values_count + 1 },
-            .{
-                .initialize = .{
-                    .fields = fields.values(),
-                    .values_count = values_count,
-                    .token_start = open_brace_start,
-                },
-            },
-        });
     }
 
     fn parseFieldAccess(self: *Parser) Error!void {

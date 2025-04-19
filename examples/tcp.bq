@@ -27,12 +27,12 @@ server_init :: fn (server : *Server) {
     setsockopt(server.fd, SOL_SOCKET, SO_REUSEADDR, &optlevel as usize, 4);
     setsockopt(server.fd, SOL_SOCKET, SO_REUSEPORT, &optlevel as usize, 4);
 
-    address := sockaddr_in{
+    address := (sockaddr_in) [
         .family = AF_INET,
         .port = 0x901f,
         .addr = 0,
-        .zero = [8]u8{0,0,0,0,0,0,0,0},
-    };
+        .zero = ([8]u8) [0,0,0,0,0,0,0,0],
+    ];
 
     print("binding.. ");
 

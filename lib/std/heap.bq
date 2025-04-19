@@ -5,12 +5,12 @@ AllocatorVTable :: std.mem.AllocatorVTable;
 c_allocator_vtable := @uninitialized(AllocatorVTable);
 
 c_allocator_init :: fn () Allocator @callconv(inline) {
-    c_allocator_vtable = AllocatorVTable{
+    c_allocator_vtable = (AllocatorVTable) [
         .alloc = &c_alloc,
         .resize = &std.mem.allocator_no_resize,
         .remap = &c_remap,
         .free = &c_free,
-    };
+    ];
 
     return Allocator{
         .ctx = @uninitialized(*void),

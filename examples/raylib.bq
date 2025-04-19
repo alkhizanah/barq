@@ -14,12 +14,12 @@ noise :: fn () {
         x :: get_random_value(0, get_render_width());
         y :: get_random_value(0, get_render_height());
 
-        color :: Color {
+        color :: (Color) [
             .r = get_random_value(0, 255) as c_uchar,
             .g = get_random_value(0, 255) as c_uchar,
             .b = get_random_value(0, 255) as c_uchar,
             .a = get_random_value(0, 255) as c_uchar,
-        };
+        ];
 
         draw_pixel(x, y, color);
 
