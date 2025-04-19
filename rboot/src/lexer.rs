@@ -113,242 +113,256 @@ impl Lexer<'_> {
     }
 
     fn next_token(&mut self) -> Token {
-        while self.cursor.next_if(|x| x.is_whitespace()).is_some() {}
-
-        let mut start = self.cursor.index;
+        let kind;
+        let mut start;
         let mut modified_end = None;
 
-        let Some(ch) = self.cursor.next() else {
-            return Token::new(TokenKind::Eof, TokenRange::new(start, start));
-        };
+        // We try again if we skipped a comment, otherwise we just break out of the loop
+        loop {
+            while self.cursor.next_if(|x| x.is_whitespace()).is_some() {}
 
-        let kind = match ch {
-            | '(' => TokenKind::OpenParen,
-            | ')' => TokenKind::CloseParen,
-            | '{' => TokenKind::OpenBrace,
-            | '}' => TokenKind::CloseBrace,
-            | '[' => TokenKind::OpenBracket,
-            | ']' => TokenKind::CloseBracket,
-            | ':' => TokenKind::Colon,
-            | ',' => TokenKind::Comma,
-            | ';' => TokenKind::Semicolon,
+            start = self.cursor.index;
 
-            | '.' => {
-                if self.cursor.next_if_eq('.').is_some() {
+            let Some(ch) = self.cursor.next() else {
+                return Token::new(TokenKind::Eof, TokenRange::new(start, start));
+            };
+
+            kind = match ch {
+                | '(' => TokenKind::OpenParen,
+                | ')' => TokenKind::CloseParen,
+                | '{' => TokenKind::OpenBrace,
+                | '}' => TokenKind::CloseBrace,
+                | '[' => TokenKind::OpenBracket,
+                | ']' => TokenKind::CloseBracket,
+                | ':' => TokenKind::Colon,
+                | ',' => TokenKind::Comma,
+                | ';' => TokenKind::Semicolon,
+
+                | '.' => {
                     if self.cursor.next_if_eq('.').is_some() {
-                        TokenKind::TriplePeriod
-                    } else {
-                        TokenKind::DoublePeriod
-                    }
-                } else {
-                    TokenKind::Period
-                }
-            }
-
-            | '=' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Comparison(Comparison::Eql)
-                } else if self.cursor.next_if_eq('>').is_some() {
-                    TokenKind::FatArrow
-                } else {
-                    TokenKind::Assign(None)
-                }
-            }
-
-            | '!' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Comparison(Comparison::NotEql)
-                } else {
-                    TokenKind::Boolwise(Boolwise::Not)
-                }
-            }
-
-            | '<' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Comparison(Comparison::LessOrEql)
-                } else if self.cursor.next_if_eq('<').is_some() {
-                    if self.cursor.next_if_eq('=').is_some() {
-                        TokenKind::Assign(Some(Operator::LeftShift))
-                    } else {
-                        TokenKind::Operator(Operator::LeftShift)
-                    }
-                } else {
-                    TokenKind::Comparison(Comparison::LessThan)
-                }
-            }
-
-            | '>' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Comparison(Comparison::GreaterOrEql)
-                } else if self.cursor.next_if_eq('>').is_some() {
-                    if self.cursor.next_if_eq('=').is_some() {
-                        TokenKind::Assign(Some(Operator::RightShift))
-                    } else {
-                        TokenKind::Operator(Operator::RightShift)
-                    }
-                } else {
-                    TokenKind::Comparison(Comparison::GreaterThan)
-                }
-            }
-
-            | '+' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Plus))
-                } else {
-                    TokenKind::Operator(Operator::Plus)
-                }
-            }
-
-            | '-' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Minus))
-                } else {
-                    TokenKind::Operator(Operator::Minus)
-                }
-            }
-
-            | '*' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Multiply))
-                } else {
-                    TokenKind::Operator(Operator::Multiply)
-                }
-            }
-
-            | '/' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Divide))
-                } else {
-                    TokenKind::Operator(Operator::Divide)
-                }
-            }
-
-            | '%' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Modulo))
-                } else {
-                    TokenKind::Operator(Operator::Modulo)
-                }
-            }
-
-            | '~' => TokenKind::Operator(Operator::Bitwise(Bitwise::Not)),
-
-            | '&' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Bitwise(Bitwise::And)))
-                } else {
-                    TokenKind::Operator(Operator::Bitwise(Bitwise::And))
-                }
-            }
-
-            | '|' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Bitwise(Bitwise::Or)))
-                } else {
-                    TokenKind::Operator(Operator::Bitwise(Bitwise::Or))
-                }
-            }
-
-            | '^' => {
-                if self.cursor.next_if_eq('=').is_some() {
-                    TokenKind::Assign(Some(Operator::Bitwise(Bitwise::Xor)))
-                } else {
-                    TokenKind::Operator(Operator::Bitwise(Bitwise::Xor))
-                }
-            }
-
-            | 'a'..='z' | 'A'..='Z' | '_' => {
-                while self
-                    .cursor
-                    .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9'))
-                    .is_some()
-                {}
-
-                match &self.cursor.buffer[start as usize..self.cursor.index as usize] {
-                    | "const" => TokenKind::Keyword(Keyword::Const),
-                    | "defer" => TokenKind::Keyword(Keyword::Defer),
-                    | "struct" => TokenKind::Keyword(Keyword::Struct),
-                    | "enum" => TokenKind::Keyword(Keyword::Enum),
-                    | "fn" => TokenKind::Keyword(Keyword::Fn),
-                    | "switch" => TokenKind::Keyword(Keyword::Switch),
-                    | "if" => TokenKind::Keyword(Keyword::If),
-                    | "then" => TokenKind::Keyword(Keyword::Then),
-                    | "else" => TokenKind::Keyword(Keyword::Else),
-                    | "while" => TokenKind::Keyword(Keyword::While),
-                    | "break" => TokenKind::Keyword(Keyword::Break),
-                    | "continue" => TokenKind::Keyword(Keyword::Continue),
-                    | "asm" => TokenKind::Keyword(Keyword::Asm),
-                    | "as" => TokenKind::Keyword(Keyword::As),
-                    | "return" => TokenKind::Keyword(Keyword::Return),
-
-                    | _ => TokenKind::Identifier,
-                }
-            }
-
-            | '@' => {
-                while self
-                    .cursor
-                    .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9'))
-                    .is_some()
-                {}
-
-                if self.cursor.index > start {
-                    start += 1;
-
-                    TokenKind::SpecialIdentifier
-                } else {
-                    TokenKind::Invalid
-                }
-            }
-
-            | '"' | '\'' => {
-                let mut unescaping = false;
-
-                while let Some(nch) = self.cursor.next_if(|x| unescaping || x != ch) {
-                    if unescaping {
-                        unescaping = false;
-                    } else if nch == '\\' {
-                        unescaping = true;
-                    }
-                }
-
-                if self.cursor.next() != Some(ch) {
-                    TokenKind::Invalid
-                } else {
-                    start += 1;
-                    modified_end = Some(self.cursor.index - 1);
-
-                    if ch == '"' {
-                        TokenKind::StringLiteral
-                    } else {
-                        TokenKind::CharLiteral
-                    }
-                }
-            }
-
-            | '0'..='9' => {
-                let mut kind = TokenKind::Int;
-
-                while let Some(ch) = self
-                    .cursor
-                    .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '.' | '0'..='9'))
-                {
-                    if ch == '.' {
-                        if self.cursor.peek() == Some('.') {
-                            self.cursor.index -= 1;
-
-                            break;
+                        if self.cursor.next_if_eq('.').is_some() {
+                            TokenKind::TriplePeriod
                         } else {
-                            kind = TokenKind::Float;
+                            TokenKind::DoublePeriod
+                        }
+                    } else {
+                        TokenKind::Period
+                    }
+                }
+
+                | '=' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Comparison(Comparison::Eql)
+                    } else if self.cursor.next_if_eq('>').is_some() {
+                        TokenKind::FatArrow
+                    } else {
+                        TokenKind::Assign(None)
+                    }
+                }
+
+                | '!' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Comparison(Comparison::NotEql)
+                    } else {
+                        TokenKind::Boolwise(Boolwise::Not)
+                    }
+                }
+
+                | '<' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Comparison(Comparison::LessOrEql)
+                    } else if self.cursor.next_if_eq('<').is_some() {
+                        if self.cursor.next_if_eq('=').is_some() {
+                            TokenKind::Assign(Some(Operator::LeftShift))
+                        } else {
+                            TokenKind::Operator(Operator::LeftShift)
+                        }
+                    } else {
+                        TokenKind::Comparison(Comparison::LessThan)
+                    }
+                }
+
+                | '>' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Comparison(Comparison::GreaterOrEql)
+                    } else if self.cursor.next_if_eq('>').is_some() {
+                        if self.cursor.next_if_eq('=').is_some() {
+                            TokenKind::Assign(Some(Operator::RightShift))
+                        } else {
+                            TokenKind::Operator(Operator::RightShift)
+                        }
+                    } else {
+                        TokenKind::Comparison(Comparison::GreaterThan)
+                    }
+                }
+
+                | '+' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Plus))
+                    } else {
+                        TokenKind::Operator(Operator::Plus)
+                    }
+                }
+
+                | '-' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Minus))
+                    } else {
+                        TokenKind::Operator(Operator::Minus)
+                    }
+                }
+
+                | '*' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Multiply))
+                    } else {
+                        TokenKind::Operator(Operator::Multiply)
+                    }
+                }
+
+                | '/' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Divide))
+                    } else if self.cursor.next_if_eq('/').is_some() {
+                        while self.cursor.next_if(|x| x != '\n').is_some() {}
+
+                        self.cursor.next();
+
+                        continue;
+                    } else {
+                        TokenKind::Operator(Operator::Divide)
+                    }
+                }
+
+                | '%' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Modulo))
+                    } else {
+                        TokenKind::Operator(Operator::Modulo)
+                    }
+                }
+
+                | '~' => TokenKind::Operator(Operator::Bitwise(Bitwise::Not)),
+
+                | '&' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Bitwise(Bitwise::And)))
+                    } else {
+                        TokenKind::Operator(Operator::Bitwise(Bitwise::And))
+                    }
+                }
+
+                | '|' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Bitwise(Bitwise::Or)))
+                    } else {
+                        TokenKind::Operator(Operator::Bitwise(Bitwise::Or))
+                    }
+                }
+
+                | '^' => {
+                    if self.cursor.next_if_eq('=').is_some() {
+                        TokenKind::Assign(Some(Operator::Bitwise(Bitwise::Xor)))
+                    } else {
+                        TokenKind::Operator(Operator::Bitwise(Bitwise::Xor))
+                    }
+                }
+
+                | 'a'..='z' | 'A'..='Z' | '_' => {
+                    while self
+                        .cursor
+                        .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9'))
+                        .is_some()
+                    {}
+
+                    match &self.cursor.buffer[start as usize..self.cursor.index as usize] {
+                        | "const" => TokenKind::Keyword(Keyword::Const),
+                        | "defer" => TokenKind::Keyword(Keyword::Defer),
+                        | "struct" => TokenKind::Keyword(Keyword::Struct),
+                        | "enum" => TokenKind::Keyword(Keyword::Enum),
+                        | "fn" => TokenKind::Keyword(Keyword::Fn),
+                        | "switch" => TokenKind::Keyword(Keyword::Switch),
+                        | "if" => TokenKind::Keyword(Keyword::If),
+                        | "then" => TokenKind::Keyword(Keyword::Then),
+                        | "else" => TokenKind::Keyword(Keyword::Else),
+                        | "while" => TokenKind::Keyword(Keyword::While),
+                        | "break" => TokenKind::Keyword(Keyword::Break),
+                        | "continue" => TokenKind::Keyword(Keyword::Continue),
+                        | "asm" => TokenKind::Keyword(Keyword::Asm),
+                        | "as" => TokenKind::Keyword(Keyword::As),
+                        | "return" => TokenKind::Keyword(Keyword::Return),
+
+                        | _ => TokenKind::Identifier,
+                    }
+                }
+
+                | '@' => {
+                    while self
+                        .cursor
+                        .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '0'..='9'))
+                        .is_some()
+                    {}
+
+                    if self.cursor.index > start {
+                        start += 1;
+
+                        TokenKind::SpecialIdentifier
+                    } else {
+                        TokenKind::Invalid
+                    }
+                }
+
+                | '"' | '\'' => {
+                    let mut unescaping = false;
+
+                    while let Some(nch) = self.cursor.next_if(|x| unescaping || x != ch) {
+                        if unescaping {
+                            unescaping = false;
+                        } else if nch == '\\' {
+                            unescaping = true;
+                        }
+                    }
+
+                    if self.cursor.next() != Some(ch) {
+                        TokenKind::Invalid
+                    } else {
+                        start += 1;
+                        modified_end = Some(self.cursor.index - 1);
+
+                        if ch == '"' {
+                            TokenKind::StringLiteral
+                        } else {
+                            TokenKind::CharLiteral
                         }
                     }
                 }
 
-                kind
-            }
+                | '0'..='9' => {
+                    let mut kind = TokenKind::Int;
 
-            | _ => TokenKind::Invalid,
-        };
+                    while let Some(ch) = self
+                        .cursor
+                        .next_if(|x| matches!(x, 'a'..='z' | 'A'..='Z' | '_' | '.' | '0'..='9'))
+                    {
+                        if ch == '.' {
+                            if self.cursor.peek() == Some('.') {
+                                self.cursor.index -= 1;
+
+                                break;
+                            } else {
+                                kind = TokenKind::Float;
+                            }
+                        }
+                    }
+
+                    kind
+                }
+
+                | _ => TokenKind::Invalid,
+            };
+
+            break;
+        }
 
         let range = TokenRange::new(start, modified_end.unwrap_or(self.cursor.index));
 

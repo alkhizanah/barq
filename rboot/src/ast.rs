@@ -23,6 +23,7 @@ pub enum Stmt {
     WhileLoop(WhileLoop),
     Break(TokenIdx),
     Continue(TokenIdx),
+    Defer(TokenIdx, Box<Stmt>),
     Return(Return),
     Block(Vec<Stmt>),
     Expr(Expr),
@@ -48,23 +49,26 @@ pub enum Expr {
     Int(u64),
     Float(f64),
     Function(Function),
+    Slice(Slice),
+    Struct(Struct),
+    Array(Array),
+    Cast(Cast),
+    Conditional(Conditional),
+    Switch(Switch),
+    Assign(Assign),
+    BuiltinCall(BuiltinCall),
+    Call(Call),
+    InlineAssembly(InlineAssembly),
+    ElementAccess(ElementAccess),
+    FieldAccess(FieldAccess),
+    Dereference(Dereference),
+    UnaryOperation((TokenIdx, UnaryOperator), Box<Expr>),
+    BinaryOperation(Box<Expr>, (TokenIdx, BinaryOperator), Box<Expr>),
     FunctionType(FunctionType),
     ArrayType(ArrayType),
     PointerType(PointerType),
     StructType(StructType),
     EnumType(EnumType),
-    InlineAssembly(InlineAssembly),
-    Conditional(Conditional),
-    Switch(Switch),
-    BuiltinCall(BuiltinCall),
-    Assign(Assign),
-    Call(Call),
-    Cast(Cast),
-    MakeSlice(MakeSlice),
-    ElementAccess(ElementAccess),
-    FieldAccess(FieldAccess),
-    UnaryOperation((TokenIdx, UnaryOperator), Box<Expr>),
-    BinaryOperation(Box<Expr>, (TokenIdx, BinaryOperator), Box<Expr>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -251,9 +255,23 @@ pub struct Cast {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct MakeSlice {
+pub struct Slice {
     pub target: Box<Expr>,
     pub range: (Box<Expr>, Box<Expr>),
+    pub start: TokenIdx,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Struct {
+    pub ty: Box<Expr>,
+    pub fields: Vec<(TokenRange, Expr)>,
+    pub start: TokenIdx,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Array {
+    pub ty: Box<Expr>,
+    pub values: Vec<Expr>,
     pub start: TokenIdx,
 }
 
@@ -268,6 +286,12 @@ pub struct ElementAccess {
 pub struct FieldAccess {
     pub target: Box<Expr>,
     pub field: TokenRange,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Dereference {
+    pub target: Box<Expr>,
+    pub start: TokenIdx,
 }
 
 pub enum ParserError {
@@ -522,6 +546,11 @@ impl Parser<'_> {
             | TokenKind::Keyword(Keyword::Break) => Ok(Stmt::Break(self.lexer.next().range.start)),
             | TokenKind::Keyword(Keyword::Continue) => Ok(Stmt::Continue(self.lexer.next().range.start)),
 
+            | TokenKind::Keyword(Keyword::Defer) => Ok(Stmt::Defer(
+                self.lexer.next().range.start,
+                Box::new(self.parse_stmt()?),
+            )),
+
             | TokenKind::Keyword(Keyword::Return) => self.parse_return(),
 
             | TokenKind::OpenBrace => Ok(Stmt::Block(self.parse_stmts()?)),
@@ -613,15 +642,7 @@ impl Parser<'_> {
                 self.parse_unary_operation(UnaryOperator::Reference)
             }
 
-            | TokenKind::OpenParen => {
-                self.lexer.next();
-
-                let expr = self.parse_expr(ParserPrecedence::Lowest)?;
-
-                self.expect(TokenKind::CloseParen)?;
-
-                Ok(expr)
-            }
+            | TokenKind::OpenParen => self.parse_parentheses(),
 
             | _ => Err(self.unexpected_token(Vec::new())),
         }
@@ -1249,6 +1270,62 @@ impl Parser<'_> {
         }))
     }
 
+    fn parse_parentheses(&mut self) -> ParserResult<Expr> {
+        self.lexer.next();
+
+        let value = self.parse_expr(ParserPrecedence::Lowest)?;
+
+        self.expect(TokenKind::CloseParen)?;
+
+        if let Some(start) = self.lexer.next_if_eq(TokenKind::OpenBracket).map(|x| x.range.start) {
+            let ty = Box::new(value);
+
+            if self.lexer.peek().kind == TokenKind::Period {
+                let mut fields = Vec::new();
+
+                while self.lexer.next_if_eq(TokenKind::CloseBracket).is_none() {
+                    self.expect(TokenKind::Period)?;
+
+                    let name = self.expect(TokenKind::Identifier)?.range;
+
+                    self.expect(TokenKind::Assign(None))?;
+
+                    let value = self.parse_expr(ParserPrecedence::Lowest)?;
+
+                    fields.push((name, value));
+
+                    if self
+                        .expect_either(&[TokenKind::Comma, TokenKind::CloseBracket])?
+                        .kind
+                        == TokenKind::CloseBracket
+                    {
+                        break;
+                    }
+                }
+
+                Ok(Expr::Struct(Struct { ty, fields, start }))
+            } else {
+                let mut values = Vec::new();
+
+                while self.lexer.next_if_eq(TokenKind::CloseBracket).is_none() {
+                    values.push(self.parse_expr(ParserPrecedence::Lowest)?);
+
+                    if self
+                        .expect_either(&[TokenKind::Comma, TokenKind::CloseBracket])?
+                        .kind
+                        == TokenKind::CloseBracket
+                    {
+                        break;
+                    }
+                }
+
+                Ok(Expr::Array(Array { ty, values, start }))
+            }
+        } else {
+            Ok(value)
+        }
+    }
+
     fn parse_unary_operation(&mut self, operator: UnaryOperator) -> ParserResult<Expr> {
         let start = self.lexer.next().range.start;
 
@@ -1372,7 +1449,7 @@ impl Parser<'_> {
 
         let start = self.lexer.next().range.start;
 
-        let index = Box::new(self.parse_expr(ParserPrecedence::Cast)?);
+        let index = Box::new(self.parse_expr(ParserPrecedence::Assign)?);
 
         if self
             .expect_either(&[TokenKind::DoublePeriod, TokenKind::CloseBracket])?
@@ -1383,7 +1460,7 @@ impl Parser<'_> {
 
             self.expect(TokenKind::CloseBracket)?;
 
-            Ok(Expr::MakeSlice(MakeSlice {
+            Ok(Expr::Slice(Slice {
                 target,
                 range: (index, another_index),
                 start,
@@ -1398,8 +1475,12 @@ impl Parser<'_> {
 
         self.lexer.next();
 
-        let field = self.expect(TokenKind::Identifier)?.range;
+        if let Some(start) = self.lexer.next_if_eq(TokenKind::Operator(Operator::Multiply)).map(|x| x.range.start) {
+            Ok(Expr::Dereference(Dereference { target, start }))
+        } else {
+            let field = self.expect(TokenKind::Identifier)?.range;
 
-        Ok(Expr::FieldAccess(FieldAccess { target, field }))
+            Ok(Expr::FieldAccess(FieldAccess { target, field }))
+        }
     }
 }
