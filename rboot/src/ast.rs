@@ -1277,7 +1277,11 @@ impl Parser<'_> {
 
         self.expect(TokenKind::CloseParen)?;
 
-        if let Some(start) = self.lexer.next_if_eq(TokenKind::OpenBracket).map(|x| x.range.start) {
+        if let Some(start) = self
+            .lexer
+            .next_if_eq(TokenKind::OpenBracket)
+            .map(|x| x.range.start)
+        {
             let ty = Box::new(value);
 
             if self.lexer.peek().kind == TokenKind::Period {
@@ -1475,7 +1479,11 @@ impl Parser<'_> {
 
         self.lexer.next();
 
-        if let Some(start) = self.lexer.next_if_eq(TokenKind::Operator(Operator::Multiply)).map(|x| x.range.start) {
+        if let Some(start) = self
+            .lexer
+            .next_if_eq(TokenKind::Operator(Operator::Multiply))
+            .map(|x| x.range.start)
+        {
             Ok(Expr::Dereference(Dereference { target, start }))
         } else {
             let field = self.expect(TokenKind::Identifier)?.range;
