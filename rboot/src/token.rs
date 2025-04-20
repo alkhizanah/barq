@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::bcu::BcuFile;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
@@ -32,15 +34,22 @@ impl TokenRange {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TokenLoc {
+    pub file_path: String,
     pub line: u32,
     pub column: u32,
 }
 
-impl TokenLoc {
-    pub fn find(start: TokenIdx, buffer: &str) -> TokenLoc {
-        let mut loc = TokenLoc { line: 1, column: 1 };
+impl fmt::Display for TokenLoc {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.file_path, self.line, self.column)
+    }
+}
 
-        for (i, c) in buffer.char_indices() {
+impl TokenLoc {
+    pub fn find(start: TokenIdx, file: &'_ BcuFile) -> TokenLoc {
+        let mut loc = TokenLoc { file_path: file.path.clone(), line: 1, column: 1 };
+
+        for (i, c) in file.buffer.char_indices() {
             if i == start as usize {
                 break;
             }

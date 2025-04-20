@@ -1,10 +1,10 @@
 use std::{cmp::Ordering, fmt};
 
+use crate::bcu::{Bcu, BcuFile};
 use crate::{lexer::Lexer, token::*};
 
 #[derive(Debug, PartialEq)]
 pub struct Module {
-    pub global_assembly: String,
     pub constants: Vec<Binding>,
     pub variables: Vec<Binding>,
 }
@@ -23,7 +23,7 @@ pub enum Stmt {
     WhileLoop(WhileLoop),
     Break(TokenIdx),
     Continue(TokenIdx),
-    Defer(TokenIdx, Box<Stmt>),
+    Defer(Defer),
     Return(Return),
     Block(Vec<Stmt>),
     Expr(Expr),
@@ -33,6 +33,12 @@ pub enum Stmt {
 pub struct WhileLoop {
     condition: Expr,
     body: Vec<Stmt>,
+    start: TokenIdx,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Defer {
+    deferred: Box<Stmt>,
     start: TokenIdx,
 }
 
@@ -301,15 +307,13 @@ pub enum ParserError {
 
 impl fmt::Display for ParserError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "error: ")?;
-
         match self {
             | ParserError::BadValue(reason, loc, provided) => {
-                write!(f, "{}:{}: {}: '{}'", loc.line, loc.column, reason, provided)?
+                write!(f, "{}: {}: '{}'", loc, reason, provided)?
             }
 
             | ParserError::UnexpectedToken(loc, expected_kinds) => {
-                write!(f, "{}:{}: ", loc.line, loc.column)?;
+                write!(f, "{}: ", loc)?;
 
                 if expected_kinds.is_empty() {
                     write!(f, "unexpected token")?;
@@ -329,7 +333,7 @@ impl fmt::Display for ParserError {
     }
 }
 
-type ParserResult<T> = Result<T, ParserError>;
+pub type ParserResult<T> = Result<T, ParserError>;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum ParserPrecedence {
@@ -381,18 +385,19 @@ impl From<TokenKind> for ParserPrecedence {
 }
 
 pub struct Parser<'a> {
+    bcu: &'a mut Bcu,
+    file: &'a BcuFile,
     lexer: Lexer<'a>,
-    buffer: &'a str,
     pub module: Module,
 }
 
 impl Parser<'_> {
-    pub const fn new(buffer: &'_ str) -> Parser<'_> {
+    pub fn new<'a>(bcu: &'a mut Bcu, file: &'a BcuFile) -> Parser<'a> {
         Parser {
-            lexer: Lexer::new(buffer),
-            buffer,
+            bcu,
+            file,
+            lexer: Lexer::new(file.buffer.as_str()),
             module: Module {
-                global_assembly: String::new(),
                 variables: Vec::new(),
                 constants: Vec::new(),
             },
@@ -401,7 +406,7 @@ impl Parser<'_> {
 
     fn unexpected_token(&mut self, expected_kinds: Vec<TokenKind>) -> ParserError {
         ParserError::UnexpectedToken(
-            TokenLoc::find(self.lexer.peek().range.start, self.buffer),
+            TokenLoc::find(self.lexer.peek().range.start, self.file),
             expected_kinds,
         )
     }
@@ -503,10 +508,10 @@ impl Parser<'_> {
         self.expect(TokenKind::OpenBrace)?;
 
         while let Some(token) = self.lexer.next_if_eq(TokenKind::StringLiteral) {
-            let line = token.range.get(self.buffer);
+            let line = token.range.get(self.file.buffer.as_str());
 
-            self.module.global_assembly.push_str(line);
-            self.module.global_assembly.push('\n');
+            self.bcu.global_assembly.push_str(line);
+            self.bcu.global_assembly.push('\n');
         }
 
         self.expect(TokenKind::CloseBrace)?;
@@ -546,10 +551,7 @@ impl Parser<'_> {
             | TokenKind::Keyword(Keyword::Break) => Ok(Stmt::Break(self.lexer.next().range.start)),
             | TokenKind::Keyword(Keyword::Continue) => Ok(Stmt::Continue(self.lexer.next().range.start)),
 
-            | TokenKind::Keyword(Keyword::Defer) => Ok(Stmt::Defer(
-                self.lexer.next().range.start,
-                Box::new(self.parse_stmt()?),
-            )),
+            | TokenKind::Keyword(Keyword::Defer) => self.parse_defer(),
 
             | TokenKind::Keyword(Keyword::Return) => self.parse_return(),
 
@@ -571,6 +573,13 @@ impl Parser<'_> {
             body,
             start,
         }))
+    }
+
+    fn parse_defer(&mut self) -> ParserResult<Stmt> {
+        let start = self.lexer.next().range.start;
+        let deferred = Box::new(self.parse_stmt()?);
+
+        Ok(Stmt::Defer(Defer { deferred, start }))
     }
 
     fn parse_return(&mut self) -> ParserResult<Stmt> {
@@ -654,7 +663,7 @@ impl Parser<'_> {
 
     fn parse_special_identifier(&mut self) -> ParserResult<Expr> {
         let token = self.lexer.next();
-        let token_value = token.range.get(self.buffer);
+        let token_value = token.range.get(self.file.buffer.as_str());
 
         match token_value {
             | "import" => {
@@ -705,7 +714,7 @@ impl Parser<'_> {
 
             | _ => Err(ParserError::BadValue(
                 "unknown special identifier",
-                TokenLoc::find(token.range.start, self.buffer),
+                TokenLoc::find(token.range.start, self.file),
                 token_value.to_string(),
             )),
         }
@@ -749,14 +758,14 @@ impl Parser<'_> {
 
     fn parse_string(&mut self) -> ParserResult<Expr> {
         let token = self.lexer.next();
-        let token_value = token.range.get(self.buffer);
+        let token_value = token.range.get(self.file.buffer.as_str());
 
         let mut content = String::new();
 
         if let Err(esc) = Parser::unescape(token_value, &mut content) {
             return Err(ParserError::BadValue(
                 "invalid escape code",
-                TokenLoc::find(token.range.start, self.buffer),
+                TokenLoc::find(token.range.start, self.file),
                 esc.to_string(),
             ));
         }
@@ -766,14 +775,14 @@ impl Parser<'_> {
 
     fn parse_char(&mut self) -> ParserResult<Expr> {
         let token = self.lexer.next();
-        let token_value = token.range.get(self.buffer);
+        let token_value = token.range.get(self.file.buffer.as_str());
 
         let mut content = String::new();
 
         if let Err(esc) = Parser::unescape(token_value, &mut content) {
             return Err(ParserError::BadValue(
                 "invalid escape code",
-                TokenLoc::find(token.range.start, self.buffer),
+                TokenLoc::find(token.range.start, self.file),
                 esc.to_string(),
             ));
         }
@@ -783,13 +792,13 @@ impl Parser<'_> {
         match count.cmp(&1) {
             | Ordering::Less => Err(ParserError::BadValue(
                 "invalid character literal (amount of characters is less than 1)",
-                TokenLoc::find(token.range.start, self.buffer),
+                TokenLoc::find(token.range.start, self.file),
                 content,
             )),
 
             | Ordering::Greater => Err(ParserError::BadValue(
                 "invalid character literal (amount of characters is more than 1)",
-                TokenLoc::find(token.range.start, self.buffer),
+                TokenLoc::find(token.range.start, self.file),
                 content,
             )),
 
@@ -803,13 +812,40 @@ impl Parser<'_> {
 
     fn parse_int(&mut self) -> ParserResult<Expr> {
         let token = self.lexer.next();
-        let token_value = token.range.get(self.buffer);
 
-        let Ok(val) = token_value.parse::<u64>() else {
+        let mut src = token.range.get(self.file.buffer.as_str());
+
+        let radix = if src.len() < 2 {
+            10
+        } else {
+            match &src[0..2] {
+                | "0b" => {
+                    src = &src[2..];
+
+                    2
+                }
+
+                | "0o" => {
+                    src = &src[2..];
+
+                    8
+                }
+
+                | "0x" => {
+                    src = &src[2..];
+
+                    16
+                }
+
+                | _ => 10,
+            }
+        };
+
+        let Ok(val) = u64::from_str_radix(src, radix) else {
             return Err(ParserError::BadValue(
-                "invalid number",
-                TokenLoc::find(token.range.start, self.buffer),
-                token_value.to_string(),
+                "invalid int",
+                TokenLoc::find(token.range.start, self.file),
+                src.to_string(),
             ));
         };
 
@@ -818,13 +854,14 @@ impl Parser<'_> {
 
     fn parse_float(&mut self) -> ParserResult<Expr> {
         let token = self.lexer.next();
-        let token_value = token.range.get(self.buffer);
 
-        let Ok(val) = token_value.parse::<f64>() else {
+        let src = token.range.get(self.file.buffer.as_str());
+
+        let Ok(val) = src.parse::<f64>() else {
             return Err(ParserError::BadValue(
-                "invalid number",
-                TokenLoc::find(token.range.start, self.buffer),
-                token_value.to_string(),
+                "invalid float",
+                TokenLoc::find(token.range.start, self.file),
+                src.to_string(),
             ));
         };
 
@@ -881,7 +918,7 @@ impl Parser<'_> {
         let mut explicit_callconv = false;
 
         while let Some(token) = self.lexer.next_if_eq(TokenKind::SpecialIdentifier) {
-            let token_value = token.range.get(self.buffer);
+            let token_value = token.range.get(self.file.buffer.as_str());
 
             match token_value {
                 | "foreign" => {
@@ -902,7 +939,7 @@ impl Parser<'_> {
                     self.expect(TokenKind::OpenParen)?;
 
                     let token = self.expect(TokenKind::Identifier)?;
-                    let token_value = token.range.get(self.buffer);
+                    let token_value = token.range.get(self.file.buffer.as_str());
 
                     fn_ty.calling_convention = match token_value {
                         | "auto" => CallingConvention::Auto,
@@ -913,7 +950,7 @@ impl Parser<'_> {
                         | _ => {
                             return Err(ParserError::BadValue(
                                 "unknown calling convention",
-                                TokenLoc::find(token.range.start, self.buffer),
+                                TokenLoc::find(token.range.start, self.file),
                                 token_value.to_string(),
                             ));
                         }
@@ -927,7 +964,7 @@ impl Parser<'_> {
                 | _ => {
                     return Err(ParserError::BadValue(
                         "unknown special identifier",
-                        TokenLoc::find(token.range.start, self.buffer),
+                        TokenLoc::find(token.range.start, self.file),
                         token_value.to_string(),
                     ));
                 }
@@ -1096,12 +1133,12 @@ impl Parser<'_> {
         let parsed_string = self.lexer.peek().kind == TokenKind::StringLiteral;
 
         while let Some(token) = self.lexer.next_if_eq(TokenKind::StringLiteral) {
-            let token_value = token.range.get(self.buffer);
+            let token_value = token.range.get(self.file.buffer.as_str());
 
             if let Err(esc) = Parser::unescape(token_value, &mut content) {
                 return Err(ParserError::BadValue(
                     "invalid escape code",
-                    TokenLoc::find(token.range.start, self.buffer),
+                    TokenLoc::find(token.range.start, self.file),
                     esc.to_string(),
                 ));
             }
@@ -1221,7 +1258,7 @@ impl Parser<'_> {
                 if else_body.is_some() {
                     return Err(ParserError::BadValue(
                         "duplicate switch case",
-                        TokenLoc::find(else_token.range.start, self.buffer),
+                        TokenLoc::find(else_token.range.start, self.file),
                         "else case".to_string(),
                     ));
                 }
