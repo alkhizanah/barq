@@ -108,8 +108,8 @@ pub enum Expr {
     ElementAccess(ElementAccess),
     FieldAccess(FieldAccess),
     Dereference(Dereference),
-    UnaryOperation((TokenIdx, UnaryOperator), ExprIdx),
-    BinaryOperation(ExprIdx, (TokenIdx, BinaryOperator), ExprIdx),
+    UnaryOperation(UnaryOperation),
+    BinaryOperation(BinaryOperation),
     FunctionType(FunctionType),
     ArrayType(ArrayType),
     PointerType(PointerType),
@@ -341,6 +341,21 @@ pub struct FieldAccess {
 #[derive(Debug, PartialEq)]
 pub struct Dereference {
     pub target: ExprIdx,
+    pub start: TokenIdx,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct UnaryOperation {
+    pub operator: UnaryOperator,
+    pub rhs: ExprIdx,
+    pub start: TokenIdx,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct BinaryOperation {
+    pub lhs: ExprIdx,
+    pub operator: BinaryOperator,
+    pub rhs: ExprIdx,
     pub start: TokenIdx,
 }
 
@@ -1478,7 +1493,7 @@ impl Parser<'_> {
 
         let rhs = self.parse_expr(ParserPrecedence::Prefix)?;
 
-        Ok(Expr::UnaryOperation((start, operator), rhs))
+        Ok(Expr::UnaryOperation(UnaryOperation { operator, rhs, start }))
     }
 
     fn parse_binary_expr(&mut self, lhs: ExprIdx) -> ParserResult<ExprIdx> {
@@ -1533,13 +1548,16 @@ impl Parser<'_> {
     fn parse_binary_operation(&mut self, lhs: ExprIdx, operator: BinaryOperator) -> ParserResult<Expr> {
         let operator_token = self.lexer.next();
 
+        let start = operator_token.range.start;
+
         let rhs = self.parse_expr(ParserPrecedence::from(operator_token.kind))?;
 
-        Ok(Expr::BinaryOperation(
+        Ok(Expr::BinaryOperation(BinaryOperation {
             lhs,
-            (operator_token.range.start, operator),
+            operator,
             rhs,
-        ))
+            start,
+        }))
     }
 
     fn parse_assign(&mut self, target: ExprIdx, operator: Option<Operator>) -> ParserResult<Expr> {
