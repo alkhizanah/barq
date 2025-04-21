@@ -12,11 +12,7 @@ impl Bcu {
     }
 
     pub fn parse(&mut self, file: &BcuFile) -> ParserResult<Module> {
-        let mut parser = Parser::new(self, file);
-
-        parser.parse()?;
-
-        Ok(parser.module)
+        Parser::new(self, file).parse()
     }
 }
 

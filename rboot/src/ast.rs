@@ -1,12 +1,24 @@
+use std::ops::{Deref, DerefMut};
 use std::{cmp::Ordering, fmt};
 
 use crate::bcu::{Bcu, BcuFile};
 use crate::{lexer::Lexer, token::*};
 
 #[derive(Debug, PartialEq)]
-pub struct Module {
-    pub constants: Vec<Binding>,
-    pub variables: Vec<Binding>,
+pub struct Module(StructType);
+
+impl Deref for Module {
+    type Target = StructType;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Module {
+    fn deref_mut(&mut self) -> &mut StructType {
+        &mut self.0
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -176,6 +188,8 @@ pub enum PointerSize {
 #[derive(Debug, PartialEq)]
 pub struct StructType {
     pub fields: Vec<(TokenRange, Expr)>,
+    pub constants: Vec<Binding>,
+    pub variables: Vec<Binding>,
     pub start: TokenIdx,
 }
 
@@ -184,6 +198,8 @@ pub struct EnumType {
     /// If None, we should guess which type should this enum be backed by
     pub backing_ty: Option<Box<Expr>>,
     pub fields: Vec<(TokenRange, Option<Expr>)>,
+    pub constants: Vec<Binding>,
+    pub variables: Vec<Binding>,
     pub start: TokenIdx,
 }
 
@@ -388,7 +404,6 @@ pub struct Parser<'a> {
     bcu: &'a mut Bcu,
     file: &'a BcuFile,
     lexer: Lexer<'a>,
-    pub module: Module,
 }
 
 impl Parser<'_> {
@@ -397,10 +412,6 @@ impl Parser<'_> {
             bcu,
             file,
             lexer: Lexer::new(file.buffer.as_str()),
-            module: Module {
-                variables: Vec::new(),
-                constants: Vec::new(),
-            },
         }
     }
 
@@ -411,21 +422,8 @@ impl Parser<'_> {
         )
     }
 
-    pub fn parse(&mut self) -> ParserResult<()> {
-        loop {
-            match self.lexer.peek().kind {
-                | TokenKind::Identifier => self.parse_global_binding()?,
-                | TokenKind::Keyword(Keyword::Asm) => self.parse_global_assembly()?,
-
-                | TokenKind::Eof => return Ok(()),
-
-                | _ => {
-                    return Err(
-                        self.unexpected_token(vec![TokenKind::Identifier, TokenKind::Keyword(Keyword::Asm)])
-                    );
-                }
-            }
-        }
+    pub fn parse(&mut self) -> ParserResult<Module> {
+        self.parse_struct_inner(0, TokenKind::Eof).map(|x| Module(x))
     }
 
     fn expect(&mut self, expect_kind: TokenKind) -> ParserResult<Token> {
@@ -476,20 +474,6 @@ impl Parser<'_> {
         }
 
         Ok((kind, Binding { name, ty, value }))
-    }
-
-    fn parse_global_binding(&mut self) -> ParserResult<()> {
-        let name = self.lexer.next().range;
-
-        self.expect(TokenKind::Colon)?;
-
-        match self.parse_binding(name)? {
-            | (TokenKind::Colon, binding) => self.module.constants.push(binding),
-            | (TokenKind::Assign(None), binding) => self.module.variables.push(binding),
-            | _ => unreachable!(),
-        }
-
-        self.expect_semicolon()
     }
 
     fn parse_local_binding(&mut self, name: TokenRange) -> ParserResult<Stmt> {
@@ -1058,29 +1042,79 @@ impl Parser<'_> {
     fn parse_struct_type(&mut self) -> ParserResult<Expr> {
         let start = self.lexer.next().range.start;
 
-        let mut fields = Vec::new();
-
         self.expect(TokenKind::OpenBrace)?;
 
-        while self.lexer.next_if_eq(TokenKind::CloseBrace).is_none() {
+        self.parse_struct_inner(start, TokenKind::CloseBrace)
+            .map(|x| Expr::StructType(x))
+    }
+
+    fn parse_struct_inner(&mut self, start: TokenIdx, end_token_kind: TokenKind) -> ParserResult<StructType> {
+        let mut fields = Vec::new();
+        let mut constants = Vec::new();
+        let mut variables = Vec::new();
+
+        while self.lexer.next_if_eq(end_token_kind).is_none() {
+            while self.lexer.peek().kind == TokenKind::Keyword(Keyword::Asm) {
+                self.parse_global_assembly()?;
+            }
+
+            if self.lexer.next_if_eq(end_token_kind).is_some() {
+                break;
+            }
+
             let name = self.expect(TokenKind::Identifier)?.range;
 
             self.expect(TokenKind::Colon)?;
 
-            let ty = self.parse_expr(ParserPrecedence::Lowest)?;
+            let ty;
+            let kind;
+            let value;
 
-            fields.push((name, ty));
+            if matches!(self.lexer.peek().kind, TokenKind::Colon | TokenKind::Assign(None)) {
+                ty = None;
 
-            if self
-                .expect_either(&[TokenKind::Comma, TokenKind::CloseBrace])?
-                .kind
-                == TokenKind::CloseBrace
-            {
-                break;
+                kind = self.lexer.next().kind;
+
+                value = self.parse_expr(ParserPrecedence::Lowest)?;
+
+                self.expect_semicolon()?;
+            } else {
+                ty = Some(self.parse_expr_a(ParserPrecedence::Lowest)?);
+
+                if matches!(self.lexer.peek().kind, TokenKind::Colon | TokenKind::Assign(None)) {
+                    kind = self.lexer.next().kind;
+
+                    value = self.parse_expr(ParserPrecedence::Lowest)?;
+
+                    self.expect_semicolon()?;
+                } else {
+                    if self.expect_either(&[TokenKind::Comma, end_token_kind])?.kind == end_token_kind {
+                        break;
+                    }
+
+                    kind = TokenKind::Comma;
+
+                    value = Expr::Int(0);
+                }
+            }
+
+            let binding = Binding { name, ty, value };
+
+            match kind {
+                | TokenKind::Colon => constants.push(binding),
+                | TokenKind::Assign(None) => variables.push(binding),
+                | TokenKind::Comma => fields.push((binding.name, binding.ty.unwrap())),
+
+                | _ => unreachable!(),
             }
         }
 
-        Ok(Expr::StructType(StructType { fields, start }))
+        Ok(StructType {
+            fields,
+            constants,
+            variables,
+            start,
+        })
     }
 
     fn parse_enum_type(&mut self) -> ParserResult<Expr> {
@@ -1093,32 +1127,49 @@ impl Parser<'_> {
         };
 
         let mut fields = Vec::new();
+        let mut constants = Vec::new();
+        let mut variables = Vec::new();
 
         self.expect(TokenKind::OpenBrace)?;
 
         while self.lexer.next_if_eq(TokenKind::CloseBrace).is_none() {
             let name = self.expect(TokenKind::Identifier)?.range;
 
-            let value = if self.lexer.next_if_eq(TokenKind::Assign(None)).is_none() {
-                None
+            if self.lexer.next_if_eq(TokenKind::Colon).is_some() {
+                let (kind, binding) = self.parse_binding(name)?;
+
+                match kind {
+                    TokenKind::Colon => constants.push(binding),
+                    TokenKind::Assign(None) => variables.push(binding),
+
+                    _ => unreachable!(),
+                }
+
+                self.expect_semicolon()?;
             } else {
-                Some(self.parse_expr(ParserPrecedence::Lowest)?)
-            };
+                let value = if self.lexer.next_if_eq(TokenKind::Assign(None)).is_none() {
+                    None
+                } else {
+                    Some(self.parse_expr(ParserPrecedence::Lowest)?)
+                };
 
-            fields.push((name, value));
+                fields.push((name, value));
 
-            if self
-                .expect_either(&[TokenKind::Comma, TokenKind::CloseBrace])?
-                .kind
-                == TokenKind::CloseBrace
-            {
-                break;
+                if self
+                    .expect_either(&[TokenKind::Comma, TokenKind::CloseBrace])?
+                    .kind
+                    == TokenKind::CloseBrace
+                {
+                    break;
+                }
             }
         }
 
         Ok(Expr::EnumType(EnumType {
             backing_ty,
             fields,
+            constants,
+            variables,
             start,
         }))
     }
