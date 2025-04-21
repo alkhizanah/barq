@@ -1,3 +1,4 @@
+use std::ops::{Index, IndexMut};
 use std::{cmp::Ordering, fmt};
 
 use thin_vec::{ThinVec, thin_vec};
@@ -7,9 +8,45 @@ use crate::{lexer::Lexer, token::*};
 
 #[derive(Debug, PartialEq)]
 pub struct Module {
+    pub ty: StructType,
     stmts: Vec<Stmt>,
     exprs: Vec<Expr>,
-    ty: StructType,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+pub struct StmtIdx(u32);
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
+pub struct ExprIdx(u32);
+
+impl Index<StmtIdx> for Module {
+    type Output = Stmt;
+
+    fn index(&self, index: StmtIdx) -> &Self::Output {
+        &self.stmts[index.0 as usize]
+    }
+}
+
+impl IndexMut<StmtIdx> for Module {
+    fn index_mut(&mut self, index: StmtIdx) -> &mut Self::Output {
+        &mut self.stmts[index.0 as usize]
+    }
+}
+
+impl Index<ExprIdx> for Module {
+    type Output = Expr;
+
+    fn index(&self, index: ExprIdx) -> &Self::Output {
+        &self.exprs[index.0 as usize]
+    }
+}
+
+impl IndexMut<ExprIdx> for Module {
+    fn index_mut(&mut self, index: ExprIdx) -> &mut Self::Output {
+        &mut self.exprs[index.0 as usize]
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -18,9 +55,6 @@ pub struct Binding {
     pub ty: Option<ExprIdx>,
     pub value: ExprIdx,
 }
-
-pub type StmtIdx = u32;
-pub type ExprIdx = u32;
 
 #[derive(Debug, PartialEq)]
 pub enum Stmt {
@@ -536,7 +570,7 @@ impl Parser<'_> {
             | _ => Ok(Stmt::Expr(self.parse_expr(ParserPrecedence::Lowest)?)),
         }?;
 
-        let stmt_id = self.stmts.len() as StmtIdx;
+        let stmt_id = StmtIdx(self.stmts.len() as u32);
 
         self.stmts.push(stmt);
 
@@ -649,7 +683,7 @@ impl Parser<'_> {
             | _ => Err(self.unexpected_token(Vec::new())),
         }?;
 
-        let expr_id = self.exprs.len() as ExprIdx;
+        let expr_id = ExprIdx(self.exprs.len() as u32);
 
         self.exprs.push(expr);
 
@@ -1109,7 +1143,7 @@ impl Parser<'_> {
 
                     kind = TokenKind::Comma;
 
-                    value = 0;
+                    value = ExprIdx(0);
                 }
             }
 
@@ -1429,7 +1463,7 @@ impl Parser<'_> {
                 Expr::Array(Array { ty, values, start })
             };
 
-            let expr_id = self.exprs.len() as ExprIdx;
+            let expr_id = ExprIdx(self.exprs.len() as u32);
 
             self.exprs.push(expr);
 
@@ -1489,7 +1523,7 @@ impl Parser<'_> {
             | _ => Err(self.unexpected_token(Vec::new())),
         }?;
 
-        let expr_id = self.exprs.len() as ExprIdx;
+        let expr_id = ExprIdx(self.exprs.len() as u32);
 
         self.exprs.push(expr);
 
