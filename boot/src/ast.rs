@@ -1,32 +1,26 @@
-use std::ops::{Deref, DerefMut};
 use std::{cmp::Ordering, fmt};
+
+use thin_vec::{ThinVec, thin_vec};
 
 use crate::bcu::{Bcu, BcuFile};
 use crate::{lexer::Lexer, token::*};
 
 #[derive(Debug, PartialEq)]
-pub struct Module(StructType);
-
-impl Deref for Module {
-    type Target = StructType;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Module {
-    fn deref_mut(&mut self) -> &mut StructType {
-        &mut self.0
-    }
+pub struct Module {
+    stmts: Vec<Stmt>,
+    exprs: Vec<Expr>,
+    ty: StructType,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Binding {
     pub name: TokenRange,
-    pub ty: Option<Expr>,
-    pub value: Expr,
+    pub ty: Option<ExprIdx>,
+    pub value: ExprIdx,
 }
+
+pub type StmtIdx = u32;
+pub type ExprIdx = u32;
 
 #[derive(Debug, PartialEq)]
 pub enum Stmt {
@@ -37,26 +31,26 @@ pub enum Stmt {
     Continue(TokenIdx),
     Defer(Defer),
     Return(Return),
-    Block(Vec<Stmt>),
-    Expr(Expr),
+    Block(ThinVec<StmtIdx>),
+    Expr(ExprIdx),
 }
 
 #[derive(Debug, PartialEq)]
 pub struct WhileLoop {
-    condition: Expr,
-    body: Vec<Stmt>,
+    condition: ExprIdx,
+    body: ThinVec<StmtIdx>,
     start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Defer {
-    deferred: Box<Stmt>,
+    deferred: StmtIdx,
     start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Return {
-    value: Option<Expr>,
+    value: Option<ExprIdx>,
     start: TokenIdx,
 }
 
@@ -80,8 +74,8 @@ pub enum Expr {
     ElementAccess(ElementAccess),
     FieldAccess(FieldAccess),
     Dereference(Dereference),
-    UnaryOperation((TokenIdx, UnaryOperator), Box<Expr>),
-    BinaryOperation(Box<Expr>, (TokenIdx, BinaryOperator), Box<Expr>),
+    UnaryOperation((TokenIdx, UnaryOperator), ExprIdx),
+    BinaryOperation(ExprIdx, (TokenIdx, BinaryOperator), ExprIdx),
     FunctionType(FunctionType),
     ArrayType(ArrayType),
     PointerType(PointerType),
@@ -142,14 +136,14 @@ impl From<Operator> for BinaryOperator {
 pub struct Function {
     pub signature: FunctionType,
     pub foreign: Option<TokenRange>,
-    pub body: Vec<Stmt>,
+    pub body: ThinVec<StmtIdx>,
 }
 
 #[derive(Debug, PartialEq, Default)]
 pub struct FunctionType {
-    pub parameters: Vec<(TokenRange, Expr)>,
+    pub parameters: ThinVec<(TokenRange, ExprIdx)>,
     pub is_var_args: bool,
-    pub return_ty: Option<Box<Expr>>,
+    pub return_ty: Option<ExprIdx>,
     pub calling_convention: CallingConvention,
     pub start: TokenIdx,
 }
@@ -165,8 +159,8 @@ pub enum CallingConvention {
 
 #[derive(Debug, PartialEq)]
 pub struct ArrayType {
-    pub len: Box<Expr>,
-    pub child_ty: Box<Expr>,
+    pub len: ExprIdx,
+    pub child_ty: ExprIdx,
     pub start: TokenIdx,
 }
 
@@ -174,7 +168,7 @@ pub struct ArrayType {
 pub struct PointerType {
     pub size: PointerSize,
     pub is_const: bool,
-    pub child_ty: Box<Expr>,
+    pub child_ty: ExprIdx,
     pub start: TokenIdx,
 }
 
@@ -187,46 +181,46 @@ pub enum PointerSize {
 
 #[derive(Debug, PartialEq)]
 pub struct StructType {
-    pub fields: Vec<(TokenRange, Expr)>,
-    pub constants: Vec<Binding>,
-    pub variables: Vec<Binding>,
+    pub fields: ThinVec<(TokenRange, ExprIdx)>,
+    pub constants: ThinVec<Binding>,
+    pub variables: ThinVec<Binding>,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct EnumType {
     /// If None, we should guess which type should this enum be backed by
-    pub backing_ty: Option<Box<Expr>>,
-    pub fields: Vec<(TokenRange, Option<Expr>)>,
-    pub constants: Vec<Binding>,
-    pub variables: Vec<Binding>,
+    pub backing_ty: Option<ExprIdx>,
+    pub fields: ThinVec<(TokenRange, Option<ExprIdx>)>,
+    pub constants: ThinVec<Binding>,
+    pub variables: ThinVec<Binding>,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct InlineAssembly {
     pub content: String,
-    pub input_constraints: Vec<Constraint>,
+    pub input_constraints: ThinVec<Constraint>,
     pub output_constraint: Option<Constraint>,
-    pub clobbers: Vec<TokenRange>,
+    pub clobbers: ThinVec<TokenRange>,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Constraint {
     pub register: TokenRange,
-    pub value: Box<Expr>,
+    pub value: ExprIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum ExpressiveBody {
-    Stmts(Vec<Stmt>),
-    Expr(Box<Expr>),
+    Stmts(ThinVec<StmtIdx>),
+    Expr(ExprIdx),
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Conditional {
-    pub condition: Box<Expr>,
+    pub condition: ExprIdx,
     pub then_body: ExpressiveBody,
     pub else_body: Option<ExpressiveBody>,
     pub start: TokenIdx,
@@ -234,8 +228,8 @@ pub struct Conditional {
 
 #[derive(Debug, PartialEq)]
 pub struct Switch {
-    pub value: Box<Expr>,
-    pub cases: Vec<(Vec<Expr>, ExpressiveBody)>,
+    pub value: ExprIdx,
+    pub cases: ThinVec<(ThinVec<ExprIdx>, ExpressiveBody)>,
     pub else_body: Option<ExpressiveBody>,
     pub start: TokenIdx,
 }
@@ -243,7 +237,7 @@ pub struct Switch {
 #[derive(Debug, PartialEq)]
 pub struct BuiltinCall {
     pub kind: BuiltinKind,
-    pub arguments: Vec<Expr>,
+    pub arguments: ThinVec<ExprIdx>,
     pub start: TokenIdx,
 }
 
@@ -256,63 +250,63 @@ pub enum BuiltinKind {
 
 #[derive(Debug, PartialEq)]
 pub struct Assign {
-    pub target: Box<Expr>,
+    pub target: ExprIdx,
     pub operator: Option<BinaryOperator>,
-    pub value: Box<Expr>,
+    pub value: ExprIdx,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Call {
-    pub callable: Box<Expr>,
-    pub arguments: Vec<Expr>,
+    pub callable: ExprIdx,
+    pub arguments: ThinVec<ExprIdx>,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Cast {
-    pub value: Box<Expr>,
-    pub ty: Box<Expr>,
+    pub value: ExprIdx,
+    pub ty: ExprIdx,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Slice {
-    pub target: Box<Expr>,
-    pub range: (Box<Expr>, Box<Expr>),
+    pub target: ExprIdx,
+    pub range: (ExprIdx, ExprIdx),
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Struct {
-    pub ty: Box<Expr>,
-    pub fields: Vec<(TokenRange, Expr)>,
+    pub ty: ExprIdx,
+    pub fields: ThinVec<(TokenRange, ExprIdx)>,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Array {
-    pub ty: Box<Expr>,
-    pub values: Vec<Expr>,
+    pub ty: ExprIdx,
+    pub values: ThinVec<ExprIdx>,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ElementAccess {
-    pub target: Box<Expr>,
-    pub index: Box<Expr>,
+    pub target: ExprIdx,
+    pub index: ExprIdx,
     pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct FieldAccess {
-    pub target: Box<Expr>,
+    pub target: ExprIdx,
     pub field: TokenRange,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Dereference {
-    pub target: Box<Expr>,
+    pub target: ExprIdx,
     pub start: TokenIdx,
 }
 
@@ -403,6 +397,8 @@ impl From<TokenKind> for ParserPrecedence {
 pub struct Parser<'a> {
     bcu: &'a mut Bcu,
     file: &'a BcuFile,
+    stmts: Vec<Stmt>,
+    exprs: Vec<Expr>,
     lexer: Lexer<'a>,
 }
 
@@ -411,6 +407,8 @@ impl Parser<'_> {
         Parser {
             bcu,
             file,
+            stmts: Vec::new(),
+            exprs: Vec::new(),
             lexer: Lexer::new(file.buffer.as_str()),
         }
     }
@@ -422,8 +420,12 @@ impl Parser<'_> {
         )
     }
 
-    pub fn parse(&mut self) -> ParserResult<Module> {
-        self.parse_struct_inner(0, TokenKind::Eof).map(|x| Module(x))
+    pub fn parse(mut self) -> ParserResult<Module> {
+        self.parse_struct_inner(0, TokenKind::Eof).map(|ty| Module {
+            stmts: self.stmts,
+            exprs: self.exprs,
+            ty,
+        })
     }
 
     fn expect(&mut self, expect_kind: TokenKind) -> ParserResult<Token> {
@@ -476,16 +478,6 @@ impl Parser<'_> {
         Ok((kind, Binding { name, ty, value }))
     }
 
-    fn parse_local_binding(&mut self, name: TokenRange) -> ParserResult<Stmt> {
-        self.lexer.next();
-
-        match self.parse_binding(name)? {
-            | (TokenKind::Colon, binding) => Ok(Stmt::Constant(binding)),
-            | (TokenKind::Assign(None), binding) => Ok(Stmt::Variable(binding)),
-            | _ => unreachable!(),
-        }
-    }
-
     fn parse_global_assembly(&mut self) -> ParserResult<()> {
         self.lexer.next();
 
@@ -503,8 +495,8 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn parse_stmts(&mut self) -> ParserResult<Vec<Stmt>> {
-        let mut body = Vec::new();
+    fn parse_stmts(&mut self) -> ParserResult<ThinVec<StmtIdx>> {
+        let mut body = ThinVec::new();
 
         self.expect(TokenKind::OpenBrace)?;
 
@@ -517,8 +509,8 @@ impl Parser<'_> {
         Ok(body)
     }
 
-    fn parse_stmt(&mut self) -> ParserResult<Stmt> {
-        match self.lexer.peek().kind {
+    fn parse_stmt(&mut self) -> ParserResult<StmtIdx> {
+        let stmt = match self.lexer.peek().kind {
             | TokenKind::Identifier => {
                 let range = self.lexer.next().range;
 
@@ -542,7 +534,13 @@ impl Parser<'_> {
             | TokenKind::OpenBrace => Ok(Stmt::Block(self.parse_stmts()?)),
 
             | _ => Ok(Stmt::Expr(self.parse_expr(ParserPrecedence::Lowest)?)),
-        }
+        }?;
+
+        let stmt_id = self.stmts.len() as StmtIdx;
+
+        self.stmts.push(stmt);
+
+        Ok(stmt_id)
     }
 
     fn parse_while_loop(&mut self) -> ParserResult<Stmt> {
@@ -559,9 +557,20 @@ impl Parser<'_> {
         }))
     }
 
+    fn parse_local_binding(&mut self, name: TokenRange) -> ParserResult<Stmt> {
+        self.lexer.next();
+
+        match self.parse_binding(name)? {
+            | (TokenKind::Colon, binding) => Ok(Stmt::Constant(binding)),
+            | (TokenKind::Assign(None), binding) => Ok(Stmt::Variable(binding)),
+            | _ => unreachable!(),
+        }
+    }
+
     fn parse_defer(&mut self) -> ParserResult<Stmt> {
         let start = self.lexer.next().range.start;
-        let deferred = Box::new(self.parse_stmt()?);
+
+        let deferred = self.parse_stmt()?;
 
         Ok(Stmt::Defer(Defer { deferred, start }))
     }
@@ -578,20 +587,20 @@ impl Parser<'_> {
         Ok(Stmt::Return(Return { value, start }))
     }
 
-    fn parse_expr(&mut self, precedence: ParserPrecedence) -> ParserResult<Expr> {
+    fn parse_expr(&mut self, precedence: ParserPrecedence) -> ParserResult<ExprIdx> {
         self.parse_expr_while(|token| {
             token.kind != TokenKind::Semicolon && ParserPrecedence::from(token.kind) > precedence
         })
     }
 
-    fn parse_expr_a(&mut self, precedence: ParserPrecedence) -> ParserResult<Expr> {
+    fn parse_expr_a(&mut self, precedence: ParserPrecedence) -> ParserResult<ExprIdx> {
         self.parse_expr_while(|token| {
             !matches!(token.kind, TokenKind::Semicolon | TokenKind::Assign(None))
                 && ParserPrecedence::from(token.kind) > precedence
         })
     }
 
-    fn parse_expr_while(&mut self, mut f: impl FnMut(Token) -> bool) -> ParserResult<Expr> {
+    fn parse_expr_while(&mut self, mut f: impl FnMut(Token) -> bool) -> ParserResult<ExprIdx> {
         let mut lhs = self.parse_unary_expr()?;
 
         while f(self.lexer.peek()) {
@@ -601,8 +610,8 @@ impl Parser<'_> {
         Ok(lhs)
     }
 
-    fn parse_unary_expr(&mut self) -> ParserResult<Expr> {
-        match self.lexer.peek().kind {
+    fn parse_unary_expr(&mut self) -> ParserResult<ExprIdx> {
+        let expr = match self.lexer.peek().kind {
             | TokenKind::Identifier => self.parse_identifier(),
             | TokenKind::SpecialIdentifier => self.parse_special_identifier(),
             | TokenKind::StringLiteral => self.parse_string(),
@@ -635,10 +644,16 @@ impl Parser<'_> {
                 self.parse_unary_operation(UnaryOperator::Reference)
             }
 
-            | TokenKind::OpenParen => self.parse_parentheses(),
+            | TokenKind::OpenParen => return self.parse_parentheses(),
 
             | _ => Err(self.unexpected_token(Vec::new())),
-        }
+        }?;
+
+        let expr_id = self.exprs.len() as ExprIdx;
+
+        self.exprs.push(expr);
+
+        Ok(expr_id)
     }
 
     fn parse_identifier(&mut self) -> ParserResult<Expr> {
@@ -659,7 +674,7 @@ impl Parser<'_> {
 
                 Ok(Expr::BuiltinCall(BuiltinCall {
                     kind: BuiltinKind::Import,
-                    arguments: vec![file_path],
+                    arguments: thin_vec![file_path],
                     start: token.range.start,
                 }))
             }
@@ -673,7 +688,7 @@ impl Parser<'_> {
 
                 Ok(Expr::BuiltinCall(BuiltinCall {
                     kind: BuiltinKind::Uninitialized,
-                    arguments: vec![value_ty],
+                    arguments: thin_vec![value_ty],
                     start: token.range.start,
                 }))
             }
@@ -691,7 +706,7 @@ impl Parser<'_> {
 
                 Ok(Expr::BuiltinCall(BuiltinCall {
                     kind: BuiltinKind::HasField,
-                    arguments: vec![container_ty, field_name],
+                    arguments: thin_vec![container_ty, field_name],
                     start: token.range.start,
                 }))
             }
@@ -856,7 +871,7 @@ impl Parser<'_> {
         let fn_keyword = self.lexer.next();
 
         let mut fn_ty = FunctionType {
-            parameters: Vec::new(),
+            parameters: ThinVec::new(),
             is_var_args: false,
             return_ty: None,
             calling_convention: CallingConvention::Auto,
@@ -895,7 +910,7 @@ impl Parser<'_> {
             self.lexer.peek().kind,
             TokenKind::OpenBrace | TokenKind::SpecialIdentifier
         ) {
-            fn_ty.return_ty = Some(Box::new(self.parse_expr(ParserPrecedence::Lowest)?));
+            fn_ty.return_ty = Some(self.parse_expr(ParserPrecedence::Lowest)?);
         }
 
         let mut foreign = None;
@@ -958,7 +973,7 @@ impl Parser<'_> {
         let body = if self.lexer.peek().kind == TokenKind::OpenBrace {
             self.parse_stmts()?
         } else {
-            Vec::new()
+            ThinVec::new()
         };
 
         if !body.is_empty() || foreign.is_some() {
@@ -980,7 +995,7 @@ impl Parser<'_> {
             .next_if_eq(TokenKind::Keyword(Keyword::Const))
             .is_some();
 
-        let child_ty = Box::new(self.parse_expr_a(ParserPrecedence::Lowest)?);
+        let child_ty = self.parse_expr_a(ParserPrecedence::Lowest)?;
 
         Ok(Expr::PointerType(PointerType {
             size: PointerSize::One,
@@ -1012,11 +1027,11 @@ impl Parser<'_> {
             }
 
             | None => {
-                let len = Box::new(self.parse_expr(ParserPrecedence::Lowest)?);
+                let len = self.parse_expr(ParserPrecedence::Lowest)?;
 
                 self.expect(TokenKind::CloseBracket)?;
 
-                let child_ty = Box::new(self.parse_expr_a(ParserPrecedence::Lowest)?);
+                let child_ty = self.parse_expr_a(ParserPrecedence::Lowest)?;
 
                 return Ok(Expr::ArrayType(ArrayType { len, child_ty, start }));
             }
@@ -1029,7 +1044,7 @@ impl Parser<'_> {
             .next_if_eq(TokenKind::Keyword(Keyword::Const))
             .is_some();
 
-        let child_ty = Box::new(self.parse_expr_a(ParserPrecedence::Lowest)?);
+        let child_ty = self.parse_expr_a(ParserPrecedence::Lowest)?;
 
         Ok(Expr::PointerType(PointerType {
             size,
@@ -1049,9 +1064,9 @@ impl Parser<'_> {
     }
 
     fn parse_struct_inner(&mut self, start: TokenIdx, end_token_kind: TokenKind) -> ParserResult<StructType> {
-        let mut fields = Vec::new();
-        let mut constants = Vec::new();
-        let mut variables = Vec::new();
+        let mut fields = ThinVec::new();
+        let mut constants = ThinVec::new();
+        let mut variables = ThinVec::new();
 
         while self.lexer.next_if_eq(end_token_kind).is_none() {
             while self.lexer.peek().kind == TokenKind::Keyword(Keyword::Asm) {
@@ -1094,7 +1109,7 @@ impl Parser<'_> {
 
                     kind = TokenKind::Comma;
 
-                    value = Expr::Int(0);
+                    value = 0;
                 }
             }
 
@@ -1123,12 +1138,12 @@ impl Parser<'_> {
         let backing_ty = if self.lexer.peek().kind == TokenKind::OpenBrace {
             None
         } else {
-            Some(Box::new(self.parse_expr(ParserPrecedence::Lowest)?))
+            Some(self.parse_expr(ParserPrecedence::Lowest)?)
         };
 
-        let mut fields = Vec::new();
-        let mut constants = Vec::new();
-        let mut variables = Vec::new();
+        let mut fields = ThinVec::new();
+        let mut constants = ThinVec::new();
+        let mut variables = ThinVec::new();
 
         self.expect(TokenKind::OpenBrace)?;
 
@@ -1139,10 +1154,10 @@ impl Parser<'_> {
                 let (kind, binding) = self.parse_binding(name)?;
 
                 match kind {
-                    TokenKind::Colon => constants.push(binding),
-                    TokenKind::Assign(None) => variables.push(binding),
+                    | TokenKind::Colon => constants.push(binding),
+                    | TokenKind::Assign(None) => variables.push(binding),
 
-                    _ => unreachable!(),
+                    | _ => unreachable!(),
                 }
 
                 self.expect_semicolon()?;
@@ -1197,9 +1212,9 @@ impl Parser<'_> {
             content.push('\n');
         }
 
-        let mut input_constraints = Vec::new();
+        let mut input_constraints = ThinVec::new();
         let mut output_constraint = None;
-        let mut clobbers = Vec::new();
+        let mut clobbers = ThinVec::new();
 
         if parsed_string {
             if self.lexer.next_if_eq(TokenKind::Colon).is_some()
@@ -1257,7 +1272,7 @@ impl Parser<'_> {
 
         self.expect(TokenKind::OpenParen)?;
 
-        let value = Box::new(self.parse_expr(ParserPrecedence::Lowest)?);
+        let value = self.parse_expr(ParserPrecedence::Lowest)?;
 
         self.expect(TokenKind::CloseParen)?;
 
@@ -1267,10 +1282,10 @@ impl Parser<'_> {
     fn parse_conditional(&mut self) -> ParserResult<Expr> {
         let start = self.lexer.next().range.start;
 
-        let condition = Box::new(self.parse_expr(ParserPrecedence::Lowest)?);
+        let condition = self.parse_expr(ParserPrecedence::Lowest)?;
 
         let then_body = if self.lexer.next_if_eq(TokenKind::Keyword(Keyword::Then)).is_some() {
-            ExpressiveBody::Expr(Box::new(self.parse_expr(ParserPrecedence::Lowest)?))
+            ExpressiveBody::Expr(self.parse_expr(ParserPrecedence::Lowest)?)
         } else {
             ExpressiveBody::Stmts(self.parse_stmts()?)
         };
@@ -1279,7 +1294,7 @@ impl Parser<'_> {
             Some(if self.lexer.peek().kind == TokenKind::OpenBrace {
                 ExpressiveBody::Stmts(self.parse_stmts()?)
             } else {
-                ExpressiveBody::Expr(Box::new(self.parse_expr(ParserPrecedence::Lowest)?))
+                ExpressiveBody::Expr(self.parse_expr(ParserPrecedence::Lowest)?)
             })
         } else {
             None
@@ -1296,9 +1311,9 @@ impl Parser<'_> {
     fn parse_switch(&mut self) -> ParserResult<Expr> {
         let start = self.lexer.next().range.start;
 
-        let value = Box::new(self.parse_expr(ParserPrecedence::Lowest)?);
+        let value = self.parse_expr(ParserPrecedence::Lowest)?;
 
-        let mut cases = Vec::new();
+        let mut cases = ThinVec::new();
 
         let mut else_body = None;
 
@@ -1319,10 +1334,10 @@ impl Parser<'_> {
                 else_body = Some(if self.lexer.peek().kind == TokenKind::OpenBrace {
                     ExpressiveBody::Stmts(self.parse_stmts()?)
                 } else {
-                    ExpressiveBody::Expr(Box::new(self.parse_expr(ParserPrecedence::Lowest)?))
+                    ExpressiveBody::Expr(self.parse_expr(ParserPrecedence::Lowest)?)
                 });
             } else {
-                let mut case_values = vec![self.parse_expr(ParserPrecedence::Lowest)?];
+                let mut case_values = thin_vec![self.parse_expr(ParserPrecedence::Lowest)?];
 
                 while self.lexer.next_if_eq(TokenKind::Comma).is_some()
                     && self.lexer.peek().kind != TokenKind::FatArrow
@@ -1335,7 +1350,7 @@ impl Parser<'_> {
                 let case_body = if self.lexer.peek().kind == TokenKind::OpenBrace {
                     ExpressiveBody::Stmts(self.parse_stmts()?)
                 } else {
-                    ExpressiveBody::Expr(Box::new(self.parse_expr(ParserPrecedence::Lowest)?))
+                    ExpressiveBody::Expr(self.parse_expr(ParserPrecedence::Lowest)?)
                 };
 
                 cases.push((case_values, case_body));
@@ -1358,7 +1373,7 @@ impl Parser<'_> {
         }))
     }
 
-    fn parse_parentheses(&mut self) -> ParserResult<Expr> {
+    fn parse_parentheses(&mut self) -> ParserResult<ExprIdx> {
         self.lexer.next();
 
         let value = self.parse_expr(ParserPrecedence::Lowest)?;
@@ -1370,10 +1385,10 @@ impl Parser<'_> {
             .next_if_eq(TokenKind::OpenBracket)
             .map(|x| x.range.start)
         {
-            let ty = Box::new(value);
+            let ty = value;
 
-            if self.lexer.peek().kind == TokenKind::Period {
-                let mut fields = Vec::new();
+            let expr = if self.lexer.peek().kind == TokenKind::Period {
+                let mut fields = ThinVec::new();
 
                 while self.lexer.next_if_eq(TokenKind::CloseBracket).is_none() {
                     self.expect(TokenKind::Period)?;
@@ -1395,9 +1410,9 @@ impl Parser<'_> {
                     }
                 }
 
-                Ok(Expr::Struct(Struct { ty, fields, start }))
+                Expr::Struct(Struct { ty, fields, start })
             } else {
-                let mut values = Vec::new();
+                let mut values = ThinVec::new();
 
                 while self.lexer.next_if_eq(TokenKind::CloseBracket).is_none() {
                     values.push(self.parse_expr(ParserPrecedence::Lowest)?);
@@ -1411,8 +1426,14 @@ impl Parser<'_> {
                     }
                 }
 
-                Ok(Expr::Array(Array { ty, values, start }))
-            }
+                Expr::Array(Array { ty, values, start })
+            };
+
+            let expr_id = self.exprs.len() as ExprIdx;
+
+            self.exprs.push(expr);
+
+            Ok(expr_id)
         } else {
             Ok(value)
         }
@@ -1421,13 +1442,13 @@ impl Parser<'_> {
     fn parse_unary_operation(&mut self, operator: UnaryOperator) -> ParserResult<Expr> {
         let start = self.lexer.next().range.start;
 
-        let rhs = Box::new(self.parse_expr(ParserPrecedence::Prefix)?);
+        let rhs = self.parse_expr(ParserPrecedence::Prefix)?;
 
         Ok(Expr::UnaryOperation((start, operator), rhs))
     }
 
-    fn parse_binary_expr(&mut self, lhs: Expr) -> ParserResult<Expr> {
-        match self.lexer.peek().kind {
+    fn parse_binary_expr(&mut self, lhs: ExprIdx) -> ParserResult<ExprIdx> {
+        let expr = match self.lexer.peek().kind {
             | TokenKind::Operator(operator) => match operator {
                 | Operator::Plus => self.parse_binary_operation(lhs, BinaryOperator::Plus),
                 | Operator::Minus => self.parse_binary_operation(lhs, BinaryOperator::Minus),
@@ -1466,15 +1487,19 @@ impl Parser<'_> {
             | TokenKind::Period => self.parse_field_access(lhs),
 
             | _ => Err(self.unexpected_token(Vec::new())),
-        }
+        }?;
+
+        let expr_id = self.exprs.len() as ExprIdx;
+
+        self.exprs.push(expr);
+
+        Ok(expr_id)
     }
 
-    fn parse_binary_operation(&mut self, lhs: Expr, operator: BinaryOperator) -> ParserResult<Expr> {
-        let lhs = Box::new(lhs);
-
+    fn parse_binary_operation(&mut self, lhs: ExprIdx, operator: BinaryOperator) -> ParserResult<Expr> {
         let operator_token = self.lexer.next();
 
-        let rhs = Box::new(self.parse_expr(ParserPrecedence::from(operator_token.kind))?);
+        let rhs = self.parse_expr(ParserPrecedence::from(operator_token.kind))?;
 
         Ok(Expr::BinaryOperation(
             lhs,
@@ -1483,14 +1508,12 @@ impl Parser<'_> {
         ))
     }
 
-    fn parse_assign(&mut self, target: Expr, operator: Option<Operator>) -> ParserResult<Expr> {
-        let target = Box::new(target);
-
+    fn parse_assign(&mut self, target: ExprIdx, operator: Option<Operator>) -> ParserResult<Expr> {
         let operator = operator.map(BinaryOperator::from);
 
         let start = self.lexer.next().range.start;
 
-        let value = Box::new(self.parse_expr(ParserPrecedence::Lowest)?);
+        let value = self.parse_expr(ParserPrecedence::Lowest)?;
 
         Ok(Expr::Assign(Assign {
             target,
@@ -1500,10 +1523,8 @@ impl Parser<'_> {
         }))
     }
 
-    fn parse_call(&mut self, callable: Expr) -> ParserResult<Expr> {
-        let callable = Box::new(callable);
-
-        let mut arguments = Vec::new();
+    fn parse_call(&mut self, callable: ExprIdx) -> ParserResult<Expr> {
+        let mut arguments = ThinVec::new();
 
         let start = self.lexer.next().range.start;
 
@@ -1526,29 +1547,25 @@ impl Parser<'_> {
         }))
     }
 
-    fn parse_cast(&mut self, value: Expr) -> ParserResult<Expr> {
-        let value = Box::new(value);
-
+    fn parse_cast(&mut self, value: ExprIdx) -> ParserResult<Expr> {
         let start = self.lexer.next().range.start;
 
-        let ty = Box::new(self.parse_expr(ParserPrecedence::Cast)?);
+        let ty = self.parse_expr(ParserPrecedence::Cast)?;
 
         Ok(Expr::Cast(Cast { value, ty, start }))
     }
 
-    fn parse_element_access(&mut self, target: Expr) -> ParserResult<Expr> {
-        let target = Box::new(target);
-
+    fn parse_element_access(&mut self, target: ExprIdx) -> ParserResult<Expr> {
         let start = self.lexer.next().range.start;
 
-        let index = Box::new(self.parse_expr(ParserPrecedence::Assign)?);
+        let index = self.parse_expr(ParserPrecedence::Assign)?;
 
         if self
             .expect_either(&[TokenKind::DoublePeriod, TokenKind::CloseBracket])?
             .kind
             == TokenKind::DoublePeriod
         {
-            let another_index = Box::new(self.parse_expr(ParserPrecedence::Cast)?);
+            let another_index = self.parse_expr(ParserPrecedence::Cast)?;
 
             self.expect(TokenKind::CloseBracket)?;
 
@@ -1562,9 +1579,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_field_access(&mut self, target: Expr) -> ParserResult<Expr> {
-        let target = Box::new(target);
-
+    fn parse_field_access(&mut self, target: ExprIdx) -> ParserResult<Expr> {
         self.lexer.next();
 
         if let Some(start) = self
