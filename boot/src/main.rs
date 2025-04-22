@@ -42,7 +42,7 @@ impl Cli {
 
                     | Err(err) => {
                         return Err(format!(
-                            "error: could not read file '{}': {}",
+                            "could not read file '{}': {}",
                             root_file_path, err
                         ));
                     }

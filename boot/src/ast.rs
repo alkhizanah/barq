@@ -1429,63 +1429,7 @@ impl Parser<'_> {
 
         self.expect(TokenKind::CloseParen)?;
 
-        if let Some(start) = self
-            .lexer
-            .next_if_eq(TokenKind::OpenBracket)
-            .map(|x| x.range.start)
-        {
-            let ty = value;
-
-            let expr = if self.lexer.peek().kind == TokenKind::Period {
-                let mut fields = ThinVec::new();
-
-                while self.lexer.next_if_eq(TokenKind::CloseBracket).is_none() {
-                    self.expect(TokenKind::Period)?;
-
-                    let name = self.expect(TokenKind::Identifier)?.range;
-
-                    self.expect(TokenKind::Assign(None))?;
-
-                    let value = self.parse_expr(ParserPrecedence::Lowest)?;
-
-                    fields.push((name, value));
-
-                    if self
-                        .expect_either(&[TokenKind::Comma, TokenKind::CloseBracket])?
-                        .kind
-                        == TokenKind::CloseBracket
-                    {
-                        break;
-                    }
-                }
-
-                Expr::Struct(Struct { ty, fields, start })
-            } else {
-                let mut values = ThinVec::new();
-
-                while self.lexer.next_if_eq(TokenKind::CloseBracket).is_none() {
-                    values.push(self.parse_expr(ParserPrecedence::Lowest)?);
-
-                    if self
-                        .expect_either(&[TokenKind::Comma, TokenKind::CloseBracket])?
-                        .kind
-                        == TokenKind::CloseBracket
-                    {
-                        break;
-                    }
-                }
-
-                Expr::Array(Array { ty, values, start })
-            };
-
-            let expr_id = ExprIdx(self.exprs.len() as u32);
-
-            self.exprs.push(expr);
-
-            Ok(expr_id)
-        } else {
-            Ok(value)
-        }
+        Ok(value)
     }
 
     fn parse_unary_operation(&mut self, operator: UnaryOperator) -> ParserResult<Expr> {
@@ -1640,6 +1584,54 @@ impl Parser<'_> {
             .map(|x| x.range.start)
         {
             Ok(Expr::Dereference(Dereference { target, start }))
+        } else if let Some(start) = self
+            .lexer
+            .next_if_eq(TokenKind::OpenBrace)
+            .map(|x| x.range.start)
+        {
+            let ty = target;
+
+            if self.lexer.peek().kind == TokenKind::Period {
+                let mut fields = ThinVec::new();
+
+                while self.lexer.next_if_eq(TokenKind::CloseBrace).is_none() {
+                    self.expect(TokenKind::Period)?;
+
+                    let name = self.expect(TokenKind::Identifier)?.range;
+
+                    self.expect(TokenKind::Assign(None))?;
+
+                    let value = self.parse_expr(ParserPrecedence::Lowest)?;
+
+                    fields.push((name, value));
+
+                    if self
+                        .expect_either(&[TokenKind::Comma, TokenKind::CloseBrace])?
+                        .kind
+                        == TokenKind::CloseBrace
+                    {
+                        break;
+                    }
+                }
+
+                Ok(Expr::Struct(Struct { ty, fields, start }))
+            } else {
+                let mut values = ThinVec::new();
+
+                while self.lexer.next_if_eq(TokenKind::CloseBrace).is_none() {
+                    values.push(self.parse_expr(ParserPrecedence::Lowest)?);
+
+                    if self
+                        .expect_either(&[TokenKind::Comma, TokenKind::CloseBrace])?
+                        .kind
+                        == TokenKind::CloseBrace
+                    {
+                        break;
+                    }
+                }
+
+                Ok(Expr::Array(Array { ty, values, start }))
+            }
         } else {
             let field = self.expect(TokenKind::Identifier)?.range;
 

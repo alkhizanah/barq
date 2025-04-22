@@ -99,7 +99,7 @@ LexerState :: enum {
 }
 
 next :: fn (self : *Lexer) Token {
-    result := (Token) [ .tag = TokenTag.eof, .range = (TokenRange) [ self.index, self.index ] ];
+    result := Token.{ .tag = TokenTag.eof, .range = TokenRange.{ self.index, self.index } };
 
     state : LexerState = LexerState.start;
 

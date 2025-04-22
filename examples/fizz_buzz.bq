@@ -9,7 +9,7 @@ print_n :: fn (n : u64) {
         n %= 10;
     }
 
-    buf :: ([1]u8) [ (n + '0') as u8 ];
+    buf :: ([1]u8).{ (n + '0') as u8 };
 
     std.io.print(buf[0..1]);
 }
