@@ -1,3 +1,11 @@
+//! Abstract Syntax Tree
+//!
+//! The tree that reperesents source code as statements and expressions, this is the second data
+//! structure used by Barq when compiling, first is Tokens (in token.rs), second is AST (in here),
+//! this file also contains the parser for the AST, which takes the source code and starts
+//! tokenizing (using Lexer in lexer.rs) while parsing
+
+
 use std::ops::{Index, IndexMut};
 use std::{cmp::Ordering, fmt};
 
@@ -223,7 +231,6 @@ pub struct StructType {
 
 #[derive(Debug, PartialEq)]
 pub struct EnumType {
-    /// If None, we should guess which type should this enum be backed by
     pub backing_ty: Option<ExprIdx>,
     pub fields: ThinVec<(TokenRange, Option<ExprIdx>)>,
     pub constants: ThinVec<Binding>,

@@ -1,3 +1,7 @@
+//! Barq Compilation Unit
+//!
+//! A structure containing the resources that gets shared between pipeline
+
 use crate::ast::{Module, Parser, ParserResult};
 
 pub struct Bcu {

@@ -1,3 +1,9 @@
+//! Lexer (a.k.a Tokenizer)
+//!
+//! A data transformer that converts the provided buffer into Tokens (available in token.rs), does
+//! not allocate, gets the next token on demand and allows only one step forward or backward without moving the
+//! cursor
+
 use crate::token::*;
 
 pub struct Cursor<'a> {
