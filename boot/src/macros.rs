@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! create_index_wrapper {
-    ($struct_ty: ident, $indexed_field: ident, $value_ty: ident, $idx_ty: ident, $idx_backing_ty: ident) => {
+    ($struct_ty: ty, $indexed_field: ident, $value_ty: ty, $idx_ty: ident, $idx_backing_ty: ty) => {
         #[derive(Debug, PartialEq, Clone, Copy)]
         #[repr(transparent)]
         pub struct $idx_ty($idx_backing_ty);
