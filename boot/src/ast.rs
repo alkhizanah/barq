@@ -79,21 +79,21 @@ pub enum Stmt {
 
 #[derive(Debug, PartialEq)]
 pub struct WhileLoop {
-    condition: ExprIdx,
-    body: ThinVec<StmtIdx>,
-    start: TokenIdx,
+    pub condition: ExprIdx,
+    pub body: ThinVec<StmtIdx>,
+    pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Defer {
-    deferred: StmtIdx,
-    start: TokenIdx,
+    pub deferred: StmtIdx,
+    pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Return {
-    value: Option<ExprIdx>,
-    start: TokenIdx,
+    pub value: Option<ExprIdx>,
+    pub start: TokenIdx,
 }
 
 #[derive(Debug, PartialEq)]
