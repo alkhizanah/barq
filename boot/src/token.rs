@@ -47,7 +47,11 @@ impl fmt::Display for TokenLoc {
 
 impl TokenLoc {
     pub fn find(start: TokenIdx, file: &'_ BcuFile) -> TokenLoc {
-        let mut loc = TokenLoc { file_path: file.path.clone(), line: 1, column: 1 };
+        let mut loc = TokenLoc {
+            file_path: file.path.clone(),
+            line: 1,
+            column: 1,
+        };
 
         for (i, c) in file.buffer.char_indices() {
             if i == start as usize {

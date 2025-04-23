@@ -3,6 +3,7 @@ use std::process::ExitCode;
 pub mod ast;
 pub mod bcu;
 pub mod lexer;
+pub mod macros;
 pub mod token;
 
 use bcu::{Bcu, BcuFile};
@@ -41,10 +42,7 @@ impl Cli {
                     | Ok(buffer) => buffer,
 
                     | Err(err) => {
-                        return Err(format!(
-                            "could not read file '{}': {}",
-                            root_file_path, err
-                        ));
+                        return Err(format!("could not read file '{}': {}", root_file_path, err));
                     }
                 };
 

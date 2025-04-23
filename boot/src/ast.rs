@@ -5,14 +5,16 @@
 //! this file also contains the parser for the AST, which takes the source code and starts
 //! tokenizing (using Lexer in lexer.rs) while parsing
 
-
-use std::ops::{Index, IndexMut};
 use std::{cmp::Ordering, fmt};
 
 use thin_vec::{ThinVec, thin_vec};
 
-use crate::bcu::{Bcu, BcuFile};
-use crate::{lexer::Lexer, token::*};
+use crate::{
+    bcu::{Bcu, BcuFile},
+    create_index_wrapper,
+    lexer::Lexer,
+    token::*,
+};
 
 #[derive(Debug, PartialEq)]
 pub struct Module {
@@ -21,41 +23,8 @@ pub struct Module {
     exprs: Vec<Expr>,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-#[repr(transparent)]
-pub struct StmtIdx(u32);
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-#[repr(transparent)]
-pub struct ExprIdx(u32);
-
-impl Index<StmtIdx> for Module {
-    type Output = Stmt;
-
-    fn index(&self, index: StmtIdx) -> &Self::Output {
-        &self.stmts[index.0 as usize]
-    }
-}
-
-impl IndexMut<StmtIdx> for Module {
-    fn index_mut(&mut self, index: StmtIdx) -> &mut Self::Output {
-        &mut self.stmts[index.0 as usize]
-    }
-}
-
-impl Index<ExprIdx> for Module {
-    type Output = Expr;
-
-    fn index(&self, index: ExprIdx) -> &Self::Output {
-        &self.exprs[index.0 as usize]
-    }
-}
-
-impl IndexMut<ExprIdx> for Module {
-    fn index_mut(&mut self, index: ExprIdx) -> &mut Self::Output {
-        &mut self.exprs[index.0 as usize]
-    }
-}
+create_index_wrapper!(Module, stmts, Stmt, StmtIdx, u32);
+create_index_wrapper!(Module, exprs, Expr, ExprIdx, u32);
 
 #[derive(Debug, PartialEq)]
 pub struct Binding {
@@ -1591,11 +1560,7 @@ impl Parser<'_> {
             .map(|x| x.range.start)
         {
             Ok(Expr::Dereference(Dereference { target, start }))
-        } else if let Some(start) = self
-            .lexer
-            .next_if_eq(TokenKind::OpenBrace)
-            .map(|x| x.range.start)
-        {
+        } else if let Some(start) = self.lexer.next_if_eq(TokenKind::OpenBrace).map(|x| x.range.start) {
             let ty = target;
 
             if self.lexer.peek().kind == TokenKind::Period {

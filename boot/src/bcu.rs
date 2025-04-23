@@ -27,9 +27,6 @@ pub struct BcuFile {
 
 impl BcuFile {
     pub const fn new(path: String, buffer: String) -> BcuFile {
-        BcuFile {
-            path,
-            buffer,
-        }
+        BcuFile { path, buffer }
     }
 }
