@@ -78,7 +78,7 @@ impl Lexer<'_> {
     }
 
     #[inline]
-    pub fn back_to(&mut self, index: TokenIdx) {
+    pub fn back_to(&mut self, index: ByteOffset) {
         self.prev_token = None;
         self.peek_token = None;
 
@@ -130,7 +130,7 @@ impl Lexer<'_> {
             start = self.cursor.index;
 
             let Some(ch) = self.cursor.next() else {
-                return Token::new(TokenKind::Eof, TokenRange::new(start, start));
+                return Token::new(TokenKind::Eof, ByteRange::new(start, start));
             };
 
             kind = match ch {
@@ -370,7 +370,7 @@ impl Lexer<'_> {
             break;
         }
 
-        let range = TokenRange::new(start, modified_end.unwrap_or(self.cursor.index));
+        let range = ByteRange::new(start, modified_end.unwrap_or(self.cursor.index));
 
         Token::new(kind, range)
     }

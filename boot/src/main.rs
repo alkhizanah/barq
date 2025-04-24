@@ -82,7 +82,7 @@ impl Cli {
                 let mut bcu = Bcu::new();
 
                 match bcu.parse(&options.root_file) {
-                    | Ok(module) => module,
+                    | Ok(ast) => ast,
 
                     | Err(err) => {
                         eprintln!("error: {}", err);

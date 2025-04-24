@@ -2,7 +2,7 @@
 //!
 //! A structure containing the resources that gets shared between pipeline
 
-use crate::ast::{Module, Parser, ParserResult};
+use crate::ast::{Ast, Parser, ParserResult};
 
 pub struct Bcu {
     pub global_assembly: String,
@@ -15,7 +15,7 @@ impl Bcu {
         }
     }
 
-    pub fn parse(&mut self, file: &BcuFile) -> ParserResult<Module> {
+    pub fn parse(&mut self, file: &BcuFile) -> ParserResult<Ast> {
         Parser::new(self, file).parse()
     }
 }

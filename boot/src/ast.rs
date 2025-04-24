@@ -17,18 +17,18 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq)]
-pub struct Module {
-    pub ty: StructType,
+pub struct Ast {
+    pub module: StructType,
     stmts: Vec<Stmt>,
     exprs: Vec<Expr>,
 }
 
-create_index_wrapper!(Module, stmts, Stmt, StmtIdx, u32);
-create_index_wrapper!(Module, exprs, Expr, ExprIdx, u32);
+create_index_wrapper!(Ast, stmts, Stmt, StmtIdx, u32);
+create_index_wrapper!(Ast, exprs, Expr, ExprIdx, u32);
 
 #[derive(Debug, PartialEq)]
 pub struct Binding {
-    pub name: TokenRange,
+    pub name: ByteRange,
     pub ty: Option<ExprIdx>,
     pub value: ExprIdx,
 }
@@ -38,8 +38,8 @@ pub enum Stmt {
     Variable(Binding),
     Constant(Binding),
     WhileLoop(WhileLoop),
-    Break(TokenIdx),
-    Continue(TokenIdx),
+    Break(ByteOffset),
+    Continue(ByteOffset),
     Defer(Defer),
     Return(Return),
     Block(ThinVec<StmtIdx>),
@@ -50,24 +50,24 @@ pub enum Stmt {
 pub struct WhileLoop {
     pub condition: ExprIdx,
     pub body: ThinVec<StmtIdx>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Defer {
     pub deferred: StmtIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Return {
     pub value: Option<ExprIdx>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Expr {
-    Identifier(TokenRange),
+    Identifier(ByteRange),
     String(String),
     Int(u64),
     Float(f64),
@@ -146,17 +146,17 @@ impl From<Operator> for BinaryOperator {
 #[derive(Debug, PartialEq)]
 pub struct Function {
     pub signature: FunctionType,
-    pub foreign: Option<TokenRange>,
+    pub foreign: Option<ByteRange>,
     pub body: ThinVec<StmtIdx>,
 }
 
 #[derive(Debug, PartialEq, Default)]
 pub struct FunctionType {
-    pub parameters: ThinVec<(TokenRange, ExprIdx)>,
+    pub parameters: ThinVec<(ByteRange, ExprIdx)>,
     pub is_var_args: bool,
     pub return_ty: Option<ExprIdx>,
     pub calling_convention: CallingConvention,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq, Default)]
@@ -172,7 +172,7 @@ pub enum CallingConvention {
 pub struct ArrayType {
     pub len: ExprIdx,
     pub child_ty: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -180,7 +180,7 @@ pub struct PointerType {
     pub size: PointerSize,
     pub is_const: bool,
     pub child_ty: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -192,19 +192,19 @@ pub enum PointerSize {
 
 #[derive(Debug, PartialEq)]
 pub struct StructType {
-    pub fields: ThinVec<(TokenRange, ExprIdx)>,
+    pub fields: ThinVec<(ByteRange, ExprIdx)>,
     pub constants: ThinVec<Binding>,
     pub variables: ThinVec<Binding>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct EnumType {
     pub backing_ty: Option<ExprIdx>,
-    pub fields: ThinVec<(TokenRange, Option<ExprIdx>)>,
+    pub fields: ThinVec<(ByteRange, Option<ExprIdx>)>,
     pub constants: ThinVec<Binding>,
     pub variables: ThinVec<Binding>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -212,13 +212,13 @@ pub struct InlineAssembly {
     pub content: String,
     pub input_constraints: ThinVec<Constraint>,
     pub output_constraint: Option<Constraint>,
-    pub clobbers: ThinVec<TokenRange>,
-    pub start: TokenIdx,
+    pub clobbers: ThinVec<ByteRange>,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Constraint {
-    pub register: TokenRange,
+    pub register: ByteRange,
     pub value: ExprIdx,
 }
 
@@ -233,7 +233,7 @@ pub struct Conditional {
     pub condition: ExprIdx,
     pub then_body: ExpressiveBody,
     pub else_body: Option<ExpressiveBody>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -241,14 +241,14 @@ pub struct Switch {
     pub value: ExprIdx,
     pub cases: ThinVec<(ThinVec<ExprIdx>, ExpressiveBody)>,
     pub else_body: Option<ExpressiveBody>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct BuiltinCall {
     pub kind: BuiltinKind,
     pub arguments: ThinVec<ExprIdx>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -263,68 +263,68 @@ pub struct Assign {
     pub target: ExprIdx,
     pub operator: Option<BinaryOperator>,
     pub value: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Call {
     pub callable: ExprIdx,
     pub arguments: ThinVec<ExprIdx>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Cast {
     pub value: ExprIdx,
     pub ty: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Slice {
     pub target: ExprIdx,
     pub range: (ExprIdx, ExprIdx),
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Struct {
     pub ty: ExprIdx,
-    pub fields: ThinVec<(TokenRange, ExprIdx)>,
-    pub start: TokenIdx,
+    pub fields: ThinVec<(ByteRange, ExprIdx)>,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Array {
     pub ty: ExprIdx,
     pub values: ThinVec<ExprIdx>,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ElementAccess {
     pub target: ExprIdx,
     pub index: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct FieldAccess {
     pub target: ExprIdx,
-    pub field: TokenRange,
+    pub field: ByteRange,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Dereference {
     pub target: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct UnaryOperation {
     pub operator: UnaryOperator,
     pub rhs: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -332,7 +332,7 @@ pub struct BinaryOperation {
     pub lhs: ExprIdx,
     pub operator: BinaryOperator,
     pub rhs: ExprIdx,
-    pub start: TokenIdx,
+    pub start: ByteOffset,
 }
 
 pub enum ParserError {
@@ -445,11 +445,11 @@ impl Parser<'_> {
         )
     }
 
-    pub fn parse(mut self) -> ParserResult<Module> {
-        self.parse_struct_inner(0, TokenKind::Eof).map(|ty| Module {
+    pub fn parse(mut self) -> ParserResult<Ast> {
+        self.parse_struct_inner(0, TokenKind::Eof).map(|module| Ast {
+            module,
             stmts: self.stmts,
             exprs: self.exprs,
-            ty,
         })
     }
 
@@ -479,7 +479,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_binding(&mut self, name: TokenRange) -> ParserResult<(TokenKind, Binding)> {
+    fn parse_binding(&mut self, name: ByteRange) -> ParserResult<(TokenKind, Binding)> {
         let ty;
         let kind;
         let value;
@@ -582,7 +582,7 @@ impl Parser<'_> {
         }))
     }
 
-    fn parse_local_binding(&mut self, name: TokenRange) -> ParserResult<Stmt> {
+    fn parse_local_binding(&mut self, name: ByteRange) -> ParserResult<Stmt> {
         self.lexer.next();
 
         match self.parse_binding(name)? {
@@ -955,7 +955,7 @@ impl Parser<'_> {
 
                         self.expect(TokenKind::CloseParen)?;
                     } else {
-                        foreign = Some(TokenRange::new(0, 0));
+                        foreign = Some(ByteRange::new(0, 0));
                     }
                 }
 
@@ -1088,7 +1088,7 @@ impl Parser<'_> {
             .map(|x| Expr::StructType(x))
     }
 
-    fn parse_struct_inner(&mut self, start: TokenIdx, end_token_kind: TokenKind) -> ParserResult<StructType> {
+    fn parse_struct_inner(&mut self, start: ByteOffset, end_token_kind: TokenKind) -> ParserResult<StructType> {
         let mut fields = ThinVec::new();
         let mut constants = ThinVec::new();
         let mut variables = ThinVec::new();

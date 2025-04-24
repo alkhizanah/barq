@@ -5,26 +5,26 @@ use crate::bcu::BcuFile;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
-    pub range: TokenRange,
+    pub range: ByteRange,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, range: TokenRange) -> Token {
+    pub fn new(kind: TokenKind, range: ByteRange) -> Token {
         Token { kind, range }
     }
 }
 
-pub type TokenIdx = u32;
+pub type ByteOffset = u32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TokenRange {
-    pub start: TokenIdx,
-    pub end: TokenIdx,
+pub struct ByteRange {
+    pub start: ByteOffset,
+    pub end: ByteOffset,
 }
 
-impl TokenRange {
-    pub fn new(start: TokenIdx, end: TokenIdx) -> TokenRange {
-        TokenRange { start, end }
+impl ByteRange {
+    pub fn new(start: ByteOffset, end: ByteOffset) -> ByteRange {
+        ByteRange { start, end }
     }
 
     pub fn get<'a>(&self, buffer: &'a str) -> &'a str {
@@ -46,7 +46,7 @@ impl fmt::Display for TokenLoc {
 }
 
 impl TokenLoc {
-    pub fn find(start: TokenIdx, file: &'_ BcuFile) -> TokenLoc {
+    pub fn find(start: ByteOffset, file: &'_ BcuFile) -> TokenLoc {
         let mut loc = TokenLoc {
             file_path: file.path.clone(),
             line: 1,
