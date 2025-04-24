@@ -19,6 +19,7 @@ use crate::{
 #[derive(Debug, PartialEq)]
 pub struct Ast {
     pub module: StructType,
+    pub strings: String,
     stmts: Vec<Stmt>,
     exprs: Vec<Expr>,
 }
@@ -68,7 +69,9 @@ pub struct Return {
 #[derive(Debug, PartialEq)]
 pub enum Expr {
     Identifier(ByteRange),
-    String(String),
+    /// Unlike other uses of ByteRange, this ByteRange is pointing to a string inside of
+    /// Ast.strings
+    String(ByteRange),
     Int(u64),
     Float(f64),
     Function(Function),
@@ -209,7 +212,9 @@ pub struct EnumType {
 
 #[derive(Debug, PartialEq)]
 pub struct InlineAssembly {
-    pub content: String,
+    /// Unlike other uses of ByteRange, this ByteRange is pointing to a string inside of
+    /// Ast.strings
+    pub content: ByteRange,
     pub input_constraints: ThinVec<Constraint>,
     pub output_constraint: Option<Constraint>,
     pub clobbers: ThinVec<ByteRange>,
@@ -422,6 +427,7 @@ impl From<TokenKind> for ParserPrecedence {
 pub struct Parser<'a> {
     bcu: &'a mut Bcu,
     file: &'a BcuFile,
+    strings: String,
     stmts: Vec<Stmt>,
     exprs: Vec<Expr>,
     lexer: Lexer<'a>,
@@ -432,6 +438,7 @@ impl Parser<'_> {
         Parser {
             bcu,
             file,
+            strings: String::new(),
             stmts: Vec::new(),
             exprs: Vec::new(),
             lexer: Lexer::new(file.buffer.as_str()),
@@ -447,11 +454,13 @@ impl Parser<'_> {
 
     pub fn parse(mut self) -> ParserResult<Ast> {
         self.parse_struct_inner(0, TokenKind::Eof).map(|module| {
+            self.strings.shrink_to_fit();
             self.stmts.shrink_to_fit();
             self.exprs.shrink_to_fit();
 
             Ast {
                 module,
+                strings: self.strings,
                 stmts: self.stmts,
                 exprs: self.exprs,
             }
@@ -791,9 +800,9 @@ impl Parser<'_> {
         let token = self.lexer.next();
         let token_value = token.range.get(self.file.buffer.as_str());
 
-        let mut content = String::new();
+        let mut range = ByteRange::new(self.strings.len() as u32, 0);
 
-        if let Err(esc) = Parser::unescape(token_value, &mut content) {
+        if let Err(esc) = Parser::unescape(token_value, &mut self.strings) {
             return Err(ParserError::BadValue(
                 "invalid escape code",
                 TokenLoc::find(token.range.start, self.file),
@@ -801,7 +810,9 @@ impl Parser<'_> {
             ));
         }
 
-        Ok(Expr::String(content))
+        range.end = self.strings.len() as u32;
+
+        Ok(Expr::String(range))
     }
 
     fn parse_char(&mut self) -> ParserResult<Expr> {
@@ -1240,14 +1251,14 @@ impl Parser<'_> {
 
         self.expect(TokenKind::OpenBrace)?;
 
-        let mut content = String::new();
+        let mut content = ByteRange::new(self.strings.len() as u32, 0);
 
         let parsed_string = self.lexer.peek().kind == TokenKind::StringLiteral;
 
         while let Some(token) = self.lexer.next_if_eq(TokenKind::StringLiteral) {
             let token_value = token.range.get(self.file.buffer.as_str());
 
-            if let Err(esc) = Parser::unescape(token_value, &mut content) {
+            if let Err(esc) = Parser::unescape(token_value, &mut self.strings) {
                 return Err(ParserError::BadValue(
                     "invalid escape code",
                     TokenLoc::find(token.range.start, self.file),
@@ -1255,8 +1266,10 @@ impl Parser<'_> {
                 ));
             }
 
-            content.push('\n');
+            self.strings.push('\n');
         }
+
+        content.end = self.strings.len() as u32;
 
         let mut input_constraints = ThinVec::new();
         let mut output_constraint = None;
@@ -1300,7 +1313,6 @@ impl Parser<'_> {
 
         self.expect(TokenKind::CloseBrace)?;
 
-        content.shrink_to_fit();
         input_constraints.shrink_to_fit();
         clobbers.shrink_to_fit();
 
