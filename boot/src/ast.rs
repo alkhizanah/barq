@@ -446,10 +446,15 @@ impl Parser<'_> {
     }
 
     pub fn parse(mut self) -> ParserResult<Ast> {
-        self.parse_struct_inner(0, TokenKind::Eof).map(|module| Ast {
-            module,
-            stmts: self.stmts,
-            exprs: self.exprs,
+        self.parse_struct_inner(0, TokenKind::Eof).map(|module| {
+            self.stmts.shrink_to_fit();
+            self.exprs.shrink_to_fit();
+
+            Ast {
+                module,
+                stmts: self.stmts,
+                exprs: self.exprs,
+            }
         })
     }
 
@@ -530,6 +535,8 @@ impl Parser<'_> {
 
             self.expect_semicolon()?;
         }
+
+        body.shrink_to_fit();
 
         Ok(body)
     }
@@ -931,6 +938,8 @@ impl Parser<'_> {
             }
         }
 
+        fn_ty.parameters.shrink_to_fit();
+
         if !matches!(
             self.lexer.peek().kind,
             TokenKind::OpenBrace | TokenKind::SpecialIdentifier
@@ -1088,7 +1097,11 @@ impl Parser<'_> {
             .map(|x| Expr::StructType(x))
     }
 
-    fn parse_struct_inner(&mut self, start: ByteOffset, end_token_kind: TokenKind) -> ParserResult<StructType> {
+    fn parse_struct_inner(
+        &mut self,
+        start: ByteOffset,
+        end_token_kind: TokenKind,
+    ) -> ParserResult<StructType> {
         let mut fields = ThinVec::new();
         let mut constants = ThinVec::new();
         let mut variables = ThinVec::new();
@@ -1149,6 +1162,10 @@ impl Parser<'_> {
             }
         }
 
+        fields.shrink_to_fit();
+        constants.shrink_to_fit();
+        variables.shrink_to_fit();
+
         Ok(StructType {
             fields,
             constants,
@@ -1204,6 +1221,10 @@ impl Parser<'_> {
                 }
             }
         }
+
+        fields.shrink_to_fit();
+        constants.shrink_to_fit();
+        variables.shrink_to_fit();
 
         Ok(Expr::EnumType(EnumType {
             backing_ty,
@@ -1390,6 +1411,8 @@ impl Parser<'_> {
             }
         }
 
+        cases.shrink_to_fit();
+
         Ok(Expr::Switch(Switch {
             value,
             cases,
@@ -1453,6 +1476,7 @@ impl Parser<'_> {
             | TokenKind::Keyword(Keyword::As) => self.parse_cast(lhs),
 
             | TokenKind::OpenBracket => self.parse_element_access(lhs),
+
             | TokenKind::Period => self.parse_field_access(lhs),
 
             | _ => Err(self.unexpected_token(Vec::new())),
@@ -1511,6 +1535,8 @@ impl Parser<'_> {
                 break;
             }
         }
+
+        arguments.shrink_to_fit();
 
         Ok(Expr::Call(Call {
             callable,
@@ -1586,6 +1612,8 @@ impl Parser<'_> {
                     }
                 }
 
+                fields.shrink_to_fit();
+
                 Ok(Expr::Struct(Struct { ty, fields, start }))
             } else {
                 let mut values = ThinVec::new();
@@ -1601,6 +1629,8 @@ impl Parser<'_> {
                         break;
                     }
                 }
+
+                values.shrink_to_fit();
 
                 Ok(Expr::Array(Array { ty, values, start }))
             }
