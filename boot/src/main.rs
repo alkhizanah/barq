@@ -2,8 +2,12 @@ use std::process::ExitCode;
 
 pub mod ast;
 pub mod bcu;
+pub mod bir;
 pub mod lexer;
+pub mod lowerer;
 pub mod macros;
+pub mod parser;
+pub mod scope;
 pub mod token;
 
 use bcu::{Bcu, BcuFile};
@@ -81,8 +85,18 @@ impl Cli {
             | Command::Compile(options) => {
                 let mut bcu = Bcu::new();
 
-                match bcu.parse(&options.root_file) {
+                let ast = match bcu.parse(&options.root_file) {
                     | Ok(ast) => ast,
+
+                    | Err(err) => {
+                        eprintln!("error: {}", err);
+
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+                match bcu.lower(&options.root_file, ast) {
+                    | Ok(bir) => bir,
 
                     | Err(err) => {
                         eprintln!("error: {}", err);

@@ -3,7 +3,7 @@ macro_rules! create_index_wrapper {
     ($struct_ty: ty, $indexed_field: ident, $value_ty: ty, $idx_ty: ident, $idx_backing_ty: ty) => {
         #[derive(Debug, PartialEq, Clone, Copy)]
         #[repr(transparent)]
-        pub struct $idx_ty($idx_backing_ty);
+        pub struct $idx_ty(pub $idx_backing_ty);
 
         impl std::ops::Index<$idx_ty> for $struct_ty {
             type Output = $value_ty;

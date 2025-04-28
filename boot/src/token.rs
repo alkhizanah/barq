@@ -16,7 +16,7 @@ impl Token {
 
 pub type ByteOffset = u32;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ByteRange {
     pub start: ByteOffset,
     pub end: ByteOffset,
