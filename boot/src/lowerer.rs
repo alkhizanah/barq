@@ -8,7 +8,7 @@ use thin_vec::ThinVec;
 
 use crate::{
     ast::{self, Ast, BinaryOperator},
-    bcu::BcuFile,
+    bcu::{Bcu, CType, SourceFile},
     bir::*,
     scope::Scope,
     token::{ByteOffset, TokenLoc},
@@ -36,7 +36,8 @@ impl fmt::Display for LowererError {
 pub type LowererResult<T> = Result<T, LowererError>;
 
 pub struct Lowerer<'a> {
-    file: &'a BcuFile,
+    bcu: &'a Bcu,
+    file: &'a SourceFile,
     ast: Ast,
     instructions: Vec<Inst>,
     scope: Scope<&'a str, InstIdx>,
@@ -47,13 +48,14 @@ pub struct Lowerer<'a> {
 }
 
 impl<'a> Lowerer<'a> {
-    pub fn new(file: &'a BcuFile, ast: Ast) -> Lowerer<'a> {
+    pub fn new(bcu: &'a Bcu, file: &'a SourceFile, ast: Ast) -> Lowerer<'a> {
         let mut instructions = Vec::with_capacity(ast.nodes.len() + 2);
 
         instructions.push(Inst::Break);
         instructions.push(Inst::Continue);
 
         Lowerer {
+            bcu,
             file,
             ast,
             instructions,
@@ -185,35 +187,111 @@ impl<'a> Lowerer<'a> {
             return Ok(global);
         }
 
-        // TODO: other primatives that require a target (which we currently don't have):
-        //       usize, ssize
-        //       c ffi types
         let primative = match name {
+            | "usize" => Inst::IntTy(IntTy {
+                is_signed: false,
+                bits: self.bcu.target.pointer_bit_width(),
+            }),
+
+            | "ssize" => Inst::IntTy(IntTy {
+                is_signed: true,
+                bits: self.bcu.target.pointer_bit_width(),
+            }),
+
+            | "c_char" => Inst::IntTy(IntTy {
+                is_signed: self.bcu.target.is_c_char_signed(),
+                bits: self.bcu.target.c_type_bit_width(CType::Char),
+            }),
+
+            | "c_uchar" => Inst::IntTy(IntTy {
+                is_signed: false,
+                bits: self.bcu.target.c_type_bit_width(CType::Char),
+            }),
+
+            | "c_schar" => Inst::IntTy(IntTy {
+                is_signed: true,
+                bits: self.bcu.target.c_type_bit_width(CType::Char),
+            }),
+
+            | "c_short" => Inst::IntTy(IntTy {
+                is_signed: true,
+                bits: self.bcu.target.c_type_bit_width(CType::Short),
+            }),
+
+            | "c_ushort" => Inst::IntTy(IntTy {
+                is_signed: false,
+                bits: self.bcu.target.c_type_bit_width(CType::UShort),
+            }),
+
+            | "c_int" => Inst::IntTy(IntTy {
+                is_signed: true,
+                bits: self.bcu.target.c_type_bit_width(CType::Int),
+            }),
+
+            | "c_uint" => Inst::IntTy(IntTy {
+                is_signed: false,
+                bits: self.bcu.target.c_type_bit_width(CType::UInt),
+            }),
+
+            | "c_long" => Inst::IntTy(IntTy {
+                is_signed: true,
+                bits: self.bcu.target.c_type_bit_width(CType::Long),
+            }),
+
+            | "c_ulong" => Inst::IntTy(IntTy {
+                is_signed: false,
+                bits: self.bcu.target.c_type_bit_width(CType::ULong),
+            }),
+
+            | "c_longlong" => Inst::IntTy(IntTy {
+                is_signed: true,
+                bits: self.bcu.target.c_type_bit_width(CType::LongLong),
+            }),
+
+            | "c_ulonglong" => Inst::IntTy(IntTy {
+                is_signed: false,
+                bits: self.bcu.target.c_type_bit_width(CType::ULongLong),
+            }),
+
+            | "c_float" => Inst::FloatTy(FloatTy {
+                bits: self.bcu.target.c_type_bit_width(CType::Float),
+            }),
+
+            | "c_double" => Inst::FloatTy(FloatTy {
+                bits: self.bcu.target.c_type_bit_width(CType::Double),
+            }),
+
+            | "c_longdouble" => Inst::FloatTy(FloatTy {
+                bits: self.bcu.target.c_type_bit_width(CType::LongDouble),
+            }),
+
+            | "true" => Inst::Bool(true),
+            | "false" => Inst::Bool(false),
+
             | "void" => Inst::VoidTy,
             | "bool" => Inst::BoolTy,
+
             | "f16" => Inst::FloatTy(FloatTy { bits: 16 }),
             | "f32" => Inst::FloatTy(FloatTy { bits: 32 }),
             | "f64" => Inst::FloatTy(FloatTy { bits: 64 }),
-            | "true" => Inst::Bool(true),
-            | "false" => Inst::Bool(false),
 
             | _ => {
                 if name.len() >= 2 && name.starts_with('u') || name.starts_with('s') {
                     let is_signed = name.starts_with('s');
                     let bits = &name[1..];
 
-                    if let Ok(bits) = u16::from_str_radix(bits, 10) {
+                    if let Ok(bits) = bits.parse() {
                         Inst::IntTy(IntTy { is_signed, bits })
                     } else {
                         return Err(LowererError::UnexpectedValue(
-                            TokenLoc::find(start, &self.file),
+                            TokenLoc::find(start, self.file),
                             "could not find in scope",
                             name.to_string(),
                         ));
                     }
                 } else {
                     return Err(LowererError::UnexpectedValue(
-                        TokenLoc::find(start, &self.file),
+                        TokenLoc::find(start, self.file),
                         "could not find in scope",
                         name.to_string(),
                     ));

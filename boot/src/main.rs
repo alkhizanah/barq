@@ -10,7 +10,7 @@ pub mod parser;
 pub mod scope;
 pub mod token;
 
-use bcu::{Bcu, BcuFile};
+use bcu::{Bcu, SourceFile, Target};
 
 struct Cli {
     program: String,
@@ -22,8 +22,9 @@ enum Command {
 }
 
 struct CompileOptions {
-    root_file: BcuFile,
+    root_file: SourceFile,
     output_file_path: Option<String>,
+    target: Target,
 }
 
 impl Cli {
@@ -50,9 +51,9 @@ impl Cli {
                     }
                 };
 
-                let root_file = BcuFile::new(root_file_path, root_file_buffer);
-
+                let root_file = SourceFile::new(root_file_path, root_file_buffer);
                 let mut output_file_path = None;
+                let target = Target::native();
 
                 while let Some(option) = args.next() {
                     match option.as_str() {
@@ -71,6 +72,7 @@ impl Cli {
                 Command::Compile(CompileOptions {
                     root_file,
                     output_file_path,
+                    target,
                 })
             }
 
@@ -83,7 +85,7 @@ impl Cli {
     fn execute(self) -> ExitCode {
         match self.command {
             | Command::Compile(options) => {
-                let mut bcu = Bcu::new();
+                let mut bcu = Bcu::new(options.target);
 
                 let ast = match bcu.parse(&options.root_file) {
                     | Ok(ast) => ast,

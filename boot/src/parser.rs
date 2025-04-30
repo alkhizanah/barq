@@ -94,14 +94,14 @@ impl From<TokenKind> for ParserPrecedence {
 
 pub struct Parser<'a> {
     bcu: &'a mut Bcu,
-    file: &'a BcuFile,
+    file: &'a SourceFile,
     lexer: Lexer<'a>,
     nodes: Vec<Node>,
     strings: String,
 }
 
 impl Parser<'_> {
-    pub fn new<'a>(bcu: &'a mut Bcu, file: &'a BcuFile) -> Parser<'a> {
+    pub fn new<'a>(bcu: &'a mut Bcu, file: &'a SourceFile) -> Parser<'a> {
         Parser {
             bcu,
             file,

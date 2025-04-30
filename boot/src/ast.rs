@@ -22,7 +22,7 @@ pub struct Binding {
     pub value: NodeIdx,
 }
 
-/// Unlike other uses of ByteRange which point to bytes in BcuFile.buffer, this ByteRange is pointing to a string inside of
+/// Unlike other uses of ByteRange which point to bytes in SourceFile.buffer, this ByteRange is pointing to a string inside of
 /// Ast.strings
 pub type StringRange = ByteRange;
 

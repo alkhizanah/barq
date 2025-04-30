@@ -20,3 +20,27 @@ macro_rules! create_index_wrapper {
         }
     };
 }
+
+// Copied from Rust's standard library
+#[macro_export]
+macro_rules! cfg_match {
+    ({ $($tt:tt)* }) => {{
+        cfg_match! { $($tt)* }
+    }};
+
+    (_ => { $($output:tt)* }) => {
+        $($output)*
+    };
+
+    (
+        $cfg:meta => $output:tt
+        $($( $rest:tt )+)?
+    ) => {
+        #[cfg($cfg)]
+        cfg_match! { _ => $output }
+        $(
+            #[cfg(not($cfg))]
+            cfg_match! { $($rest)+ }
+        )?
+    };
+}

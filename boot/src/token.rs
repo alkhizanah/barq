@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::bcu::BcuFile;
+use crate::bcu::SourceFile;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
@@ -46,7 +46,7 @@ impl fmt::Display for TokenLoc {
 }
 
 impl TokenLoc {
-    pub fn find(start: ByteOffset, file: &'_ BcuFile) -> TokenLoc {
+    pub fn find(start: ByteOffset, file: &'_ SourceFile) -> TokenLoc {
         let mut loc = TokenLoc {
             file_path: file.path.clone(),
             line: 1,

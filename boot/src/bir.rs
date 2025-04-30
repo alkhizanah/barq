@@ -27,7 +27,7 @@ pub struct Binding {
     pub start: ByteOffset,
 }
 
-/// Unlike other uses of ByteRange which point to bytes in BcuFile.buffer, this ByteRange is pointing to a string inside of
+/// Unlike other uses of ByteRange which point to bytes in SourceFile.buffer, this ByteRange is pointing to a string inside of
 /// Bir.strings
 pub type StringRange = ByteRange;
 

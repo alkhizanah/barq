@@ -58,7 +58,7 @@ impl<K: Hash + Eq, V> Scope<K, V> {
     }
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.layers.iter().rev().map(|layer| layer.values()).flatten()
+        self.layers.iter().rev().flat_map(|layer| layer.values())
     }
 
     pub fn remove(&mut self, k: &K) -> Option<V> {

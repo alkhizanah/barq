@@ -115,6 +115,7 @@ println :: std.io.println;
 eprintln :: std.io.eprintln;
 socket :: std.os.linux.socket;
 bind :: std.os.linux.bind;
+write :: std.os.linux.write;
 read :: std.os.linux.read;
 close :: std.os.linux.close;
 listen :: std.os.linux.listen;
