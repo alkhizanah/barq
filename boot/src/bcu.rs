@@ -596,6 +596,26 @@ pub enum TargetFromStrErr {
     UnexpectedExtraField,
 }
 
+impl ToString for TargetFromStrErr {
+    fn to_string(&self) -> String {
+        match self {
+            | TargetFromStrErr::MissingArchitecture => "architecture not provided in target query",
+            | TargetFromStrErr::UnknownArchitecture => "unknown architecture in target query",
+            | TargetFromStrErr::MissingOperatingSystem => "operating system not provided in target query",
+            | TargetFromStrErr::UnknownOperatingSystem => "unknown operating system in target query",
+
+            | TargetFromStrErr::UnknownApplicationBinaryInterface => {
+                "unknown application binary interface in target query"
+            }
+
+            | TargetFromStrErr::UnexpectedExtraField => {
+                "did not expect fields more than arch-os-abi in target query"
+            }
+        }
+        .to_string()
+    }
+}
+
 impl FromStr for Target {
     type Err = TargetFromStrErr;
 

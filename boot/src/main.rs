@@ -1,4 +1,4 @@
-use std::process::ExitCode;
+use std::{process::ExitCode, str::FromStr};
 
 pub mod ast;
 pub mod bcu;
@@ -10,7 +10,7 @@ pub mod parser;
 pub mod scope;
 pub mod token;
 
-use bcu::{Bcu, SourceFile, Target};
+use bcu::{Bcu, SourceFile, Target, TargetFromStrErr};
 
 struct Cli {
     program: String,
@@ -53,7 +53,7 @@ impl Cli {
 
                 let root_file = SourceFile::new(root_file_path, root_file_buffer);
                 let mut output_file_path = None;
-                let target = Target::native();
+                let mut target = Target::native();
 
                 while let Some(option) = args.next() {
                     match option.as_str() {
@@ -63,6 +63,19 @@ impl Cli {
                             };
 
                             output_file_path = Some(provided_file_path);
+                        }
+
+                        | "--target" => {
+                            let Some(provided_target_query) = args.next() else {
+                                return Err("target query not provided".to_string());
+                            };
+
+                            match Target::from_str(&provided_target_query) {
+                                | Ok(parsed_target) => target = parsed_target,
+                                | Err(err) => {
+                                    return Err(err.to_string());
+                                }
+                            }
                         }
 
                         | _ => return Err(format!("unknown option: {}", option)),
