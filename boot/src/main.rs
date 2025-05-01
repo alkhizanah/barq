@@ -45,14 +45,10 @@ impl Cli {
                     exit(1);
                 };
 
-                let root_file_buffer = match std::fs::read_to_string(&root_file_path) {
-                    | Ok(buffer) => buffer,
-
-                    | Err(err) => {
-                        eprintln!("error: could not read file '{}': {}", root_file_path, err);
-                        exit(1);
-                    }
-                };
+                let root_file_buffer = std::fs::read_to_string(&root_file_path).unwrap_or_else(|err| {
+                    eprintln!("error: could not read file '{}': {}", root_file_path, err);
+                    exit(1);
+                });
 
                 let root_file = SourceFile::new(root_file_path, root_file_buffer);
                 let mut output_file_path = None;
@@ -75,14 +71,10 @@ impl Cli {
                                 exit(1);
                             };
 
-                            match Target::from_str(&provided_target_query) {
-                                | Ok(parsed_target) => target = parsed_target,
-
-                                | Err(err) => {
-                                    eprintln!("error: failed to parse target query: {}", err);
-                                    exit(1);
-                                }
-                            }
+                            target = Target::from_str(&provided_target_query).unwrap_or_else(|err| {
+                                eprintln!("error: failed to parse target query: {}", err);
+                                exit(1);
+                            });
                         }
 
                         | _ => {
@@ -113,23 +105,15 @@ impl Cli {
             | Command::Compile(options) => {
                 let mut bcu = Bcu::new(options.target);
 
-                let ast = match bcu.parse(&options.root_file) {
-                    | Ok(ast) => ast,
+                let ast = bcu.parse(&options.root_file).unwrap_or_else(|err| {
+                    eprintln!("error: {}", err);
+                    exit(1);
+                });
 
-                    | Err(err) => {
-                        eprintln!("error: {}", err);
-                        exit(1);
-                    }
-                };
-
-                match bcu.lower(&options.root_file, ast) {
-                    | Ok(bir) => bir,
-
-                    | Err(err) => {
-                        eprintln!("error: {}", err);
-                        exit(1);
-                    }
-                };
+                bcu.lower(&options.root_file, ast).unwrap_or_else(|err| {
+                    eprintln!("error: {}", err);
+                    exit(1);
+                });
             }
         }
     }
