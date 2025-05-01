@@ -1,4 +1,4 @@
-use std::{process::ExitCode, str::FromStr};
+use std::{process::exit, str::FromStr};
 
 pub mod ast;
 pub mod bcu;
@@ -10,10 +10,9 @@ pub mod parser;
 pub mod scope;
 pub mod token;
 
-use bcu::{Bcu, SourceFile, Target, TargetFromStrErr};
+use bcu::{Bcu, SourceFile, Target};
 
 struct Cli {
-    program: String,
     command: Command,
 }
 
@@ -21,6 +20,7 @@ enum Command {
     Compile(CompileOptions),
 }
 
+#[allow(dead_code)]
 struct CompileOptions {
     root_file: SourceFile,
     output_file_path: Option<String>,
@@ -28,26 +28,29 @@ struct CompileOptions {
 }
 
 impl Cli {
-    fn parse() -> Result<Cli, String> {
+    fn parse() -> Cli {
         let mut args = std::env::args();
 
-        let program = args.next().expect("program name should be passed");
+        args.next().expect("program name should be passed");
 
         let Some(command) = args.next() else {
-            return Err("command not provided".to_string());
+            eprintln!("error: command not provided");
+            exit(1);
         };
 
         let command = match command.as_str() {
             | "compile" => {
                 let Some(root_file_path) = args.next() else {
-                    return Err("root file path not provided".to_string());
+                    eprintln!("error: root file path not provided");
+                    exit(1);
                 };
 
                 let root_file_buffer = match std::fs::read_to_string(&root_file_path) {
                     | Ok(buffer) => buffer,
 
                     | Err(err) => {
-                        return Err(format!("could not read file '{}': {}", root_file_path, err));
+                        eprintln!("error: could not read file '{}': {}", root_file_path, err);
+                        exit(1);
                     }
                 };
 
@@ -59,7 +62,8 @@ impl Cli {
                     match option.as_str() {
                         | "--output" => {
                             let Some(provided_file_path) = args.next() else {
-                                return Err("output file path not provided".to_string());
+                                eprintln!("error: output file path not provided");
+                                exit(1);
                             };
 
                             output_file_path = Some(provided_file_path);
@@ -67,18 +71,24 @@ impl Cli {
 
                         | "--target" => {
                             let Some(provided_target_query) = args.next() else {
-                                return Err("target query not provided".to_string());
+                                eprintln!("error: target query not provided");
+                                exit(1);
                             };
 
                             match Target::from_str(&provided_target_query) {
                                 | Ok(parsed_target) => target = parsed_target,
+
                                 | Err(err) => {
-                                    return Err(err.to_string());
+                                    eprintln!("error: failed to parse target query: {}", err);
+                                    exit(1);
                                 }
                             }
                         }
 
-                        | _ => return Err(format!("unknown option: {}", option)),
+                        | _ => {
+                            eprintln!("error: unknown option: {}", option);
+                            exit(1);
+                        }
                     }
                 }
 
@@ -89,13 +99,16 @@ impl Cli {
                 })
             }
 
-            | _ => return Err(format!("unknown command: {}", command)),
+            | _ => {
+                eprintln!("error: unknown command: {}", command);
+                exit(1);
+            }
         };
 
-        Ok(Cli { program, command })
+        Cli { command }
     }
 
-    fn execute(self) -> ExitCode {
+    fn execute(self) {
         match self.command {
             | Command::Compile(options) => {
                 let mut bcu = Bcu::new(options.target);
@@ -105,8 +118,7 @@ impl Cli {
 
                     | Err(err) => {
                         eprintln!("error: {}", err);
-
-                        return ExitCode::FAILURE;
+                        exit(1);
                     }
                 };
 
@@ -115,25 +127,14 @@ impl Cli {
 
                     | Err(err) => {
                         eprintln!("error: {}", err);
-
-                        return ExitCode::FAILURE;
+                        exit(1);
                     }
                 };
-
-                ExitCode::SUCCESS
             }
         }
     }
 }
 
-fn main() -> ExitCode {
-    match Cli::parse() {
-        | Ok(cli) => cli.execute(),
-
-        | Err(err) => {
-            eprintln!("error: {}", err);
-
-            ExitCode::FAILURE
-        }
-    }
+fn main() {
+    Cli::parse().execute()
 }

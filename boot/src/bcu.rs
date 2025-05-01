@@ -2,7 +2,7 @@
 //!
 //! A data structure containing the resources that gets shared between pipeline
 
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use crate::{
     ast::Ast,
@@ -596,23 +596,16 @@ pub enum TargetFromStrErr {
     UnexpectedExtraField,
 }
 
-impl ToString for TargetFromStrErr {
-    fn to_string(&self) -> String {
-        match self {
-            | TargetFromStrErr::MissingArchitecture => "architecture not provided in target query",
-            | TargetFromStrErr::UnknownArchitecture => "unknown architecture in target query",
-            | TargetFromStrErr::MissingOperatingSystem => "operating system not provided in target query",
-            | TargetFromStrErr::UnknownOperatingSystem => "unknown operating system in target query",
-
-            | TargetFromStrErr::UnknownApplicationBinaryInterface => {
-                "unknown application binary interface in target query"
-            }
-
-            | TargetFromStrErr::UnexpectedExtraField => {
-                "did not expect fields more than arch-os-abi in target query"
-            }
-        }
-        .to_string()
+impl fmt::Display for TargetFromStrErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            | TargetFromStrErr::MissingArchitecture => "architecture not provided",
+            | TargetFromStrErr::UnknownArchitecture => "unknown architecture",
+            | TargetFromStrErr::MissingOperatingSystem => "operating system not provided",
+            | TargetFromStrErr::UnknownOperatingSystem => "unknown operating system",
+            | TargetFromStrErr::UnknownApplicationBinaryInterface => "unknown application binary interface",
+            | TargetFromStrErr::UnexpectedExtraField => "did not expect fields more than arch-os-abi",
+        })
     }
 }
 
