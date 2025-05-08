@@ -1,6 +1,6 @@
 # Barq
 
-A general-purpose programming language that aims to be the most sane
+A programming language for writing sane software
 
 ## Origin of the name
 
