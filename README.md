@@ -1,7 +1,7 @@
 # Barq
 
-A programming language for writing sane software
+[Examples](examples)
 
-## Origin of the name
+## Why Barq?
 
-Barq (Arabic: برق) which means "lightning", is a neutral phenomenon consisting of electrostatic discharges occuring through the atmosphere between two electrically charged regions.
+**not written yet**
