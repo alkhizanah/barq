@@ -3,8 +3,6 @@
 //! A data transformer that converts a characters buffer into `Token`s (in token.rs), does not allocate,
 //! gets the next token on demand and allows only one step forward or backward without moving the cursor
 
-use phf::phf_map;
-
 use crate::token::*;
 
 struct Cursor<'a> {
@@ -57,24 +55,6 @@ impl Cursor<'_> {
         self.next_if(|next| next == expected)
     }
 }
-
-static KEYWORDS: phf::Map<&'static str, TokenKind> = phf_map! {
-    "const" => TokenKind::Keyword(Keyword::Const),
-    "defer" => TokenKind::Keyword(Keyword::Defer),
-    "struct" => TokenKind::Keyword(Keyword::Struct),
-    "enum" => TokenKind::Keyword(Keyword::Enum),
-    "fn" => TokenKind::Keyword(Keyword::Fn),
-    "switch" => TokenKind::Keyword(Keyword::Switch),
-    "if" => TokenKind::Keyword(Keyword::If),
-    "then" => TokenKind::Keyword(Keyword::Then),
-    "else" => TokenKind::Keyword(Keyword::Else),
-    "while" => TokenKind::Keyword(Keyword::While),
-    "break" => TokenKind::Keyword(Keyword::Break),
-    "continue" => TokenKind::Keyword(Keyword::Continue),
-    "asm" => TokenKind::Keyword(Keyword::Asm),
-    "as" => TokenKind::Keyword(Keyword::As),
-    "return" => TokenKind::Keyword(Keyword::Return),
-};
 
 pub struct Lexer<'a> {
     cursor: Cursor<'a>,
@@ -302,10 +282,23 @@ impl Lexer<'_> {
 
                     let identifier = &self.cursor.buffer[start as usize..self.cursor.index as usize];
 
-                    if let Some(&keyword) = KEYWORDS.get(identifier) {
-                        keyword
-                    } else {
-                        TokenKind::Identifier
+                    match identifier {
+                        | "const" => TokenKind::Keyword(Keyword::Const),
+                        | "defer" => TokenKind::Keyword(Keyword::Defer),
+                        | "struct" => TokenKind::Keyword(Keyword::Struct),
+                        | "enum" => TokenKind::Keyword(Keyword::Enum),
+                        | "fn" => TokenKind::Keyword(Keyword::Fn),
+                        | "switch" => TokenKind::Keyword(Keyword::Switch),
+                        | "if" => TokenKind::Keyword(Keyword::If),
+                        | "then" => TokenKind::Keyword(Keyword::Then),
+                        | "else" => TokenKind::Keyword(Keyword::Else),
+                        | "while" => TokenKind::Keyword(Keyword::While),
+                        | "break" => TokenKind::Keyword(Keyword::Break),
+                        | "continue" => TokenKind::Keyword(Keyword::Continue),
+                        | "asm" => TokenKind::Keyword(Keyword::Asm),
+                        | "as" => TokenKind::Keyword(Keyword::As),
+                        | "return" => TokenKind::Keyword(Keyword::Return),
+                        | _ => TokenKind::Identifier,
                     }
                 }
 

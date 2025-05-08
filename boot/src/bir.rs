@@ -1,24 +1,27 @@
 //! Barq Intermediate Representation
 //!
 //! A data structure that reperesnts the `Ast` (in ast.rs) as instuctions that can be used as values
-//! or commands to `Sema` (yet to be implemented)
+//! or commands to `Analyzer` (in analyzer.rs)
 
+use ordered_float::OrderedFloat;
 use thin_vec::ThinVec;
 
 use crate::{
     ast::{BuiltinKind, CallingConvention, PointerSize},
-    create_index_wrapper,
+    create_index_wrapper_mut,
     token::{ByteOffset, ByteRange},
 };
 
 #[derive(Debug, PartialEq)]
 pub struct Bir {
     pub module: StructTy,
+    pub inline_assembly: Vec<InlineAssembly>,
     pub instructions: Vec<Inst>,
     pub strings: String,
 }
 
-create_index_wrapper!(Bir, instructions, Inst, InstIdx, u32);
+create_index_wrapper_mut!(Bir, inline_assembly, InlineAssembly, InlineAssemblyIdx);
+create_index_wrapper_mut!(Bir, instructions, Inst, InstIdx);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Binding {
@@ -35,7 +38,7 @@ pub type StringRange = ByteRange;
 pub enum Inst {
     String(StringRange),
     Int(u64),
-    Float(f64),
+    Float(OrderedFloat<f64>),
     Bool(bool),
     Function(Function),
     Slice(Slice),
@@ -45,7 +48,7 @@ pub enum Inst {
     Switch(Switch),
     BuiltinCall(BuiltinCall),
     Call(Call),
-    InlineAssembly(InlineAssembly),
+    InlineAssembly(InlineAssemblyIdx),
     Cast(BinaryOperation),
     Assign(BinaryOperation),
     Dereference(UnaryOperation),
@@ -73,8 +76,9 @@ pub enum Inst {
     GreaterOrEql(BinaryOperation),
     VoidTy,
     BoolTy,
-    IntTy(IntTy),
-    FloatTy(FloatTy),
+    SIntTy(u16),
+    UIntTy(u16),
+    FloatTy(u16),
     FunctionTy(FunctionTy),
     ArrayTy(ArrayTy),
     PointerTy(PointerTy),
@@ -93,29 +97,18 @@ pub enum Inst {
 
 #[derive(Debug, PartialEq)]
 pub struct Function {
-    pub signature: FunctionTy,
+    pub signature: InstIdx,
     pub foreign: Option<ByteRange>,
     pub body: ThinVec<InstIdx>,
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq)]
 pub struct FunctionTy {
     pub parameters: ThinVec<(ByteRange, InstIdx)>,
     pub is_var_args: bool,
-    pub return_ty: Option<InstIdx>,
+    pub return_ty: InstIdx,
     pub calling_convention: CallingConvention,
     pub start: ByteOffset,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct IntTy {
-    pub is_signed: bool,
-    pub bits: u16,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct FloatTy {
-    pub bits: u16,
 }
 
 #[derive(Debug, PartialEq)]
@@ -133,7 +126,7 @@ pub struct PointerTy {
     pub start: ByteOffset,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct StructTy {
     pub fields: ThinVec<(ByteRange, InstIdx)>,
     pub body: ThinVec<InstIdx>,
@@ -148,7 +141,7 @@ pub struct EnumTy {
     pub start: ByteOffset,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub struct InlineAssembly {
     pub content: StringRange,
     pub input_constraints: ThinVec<Constraint>,

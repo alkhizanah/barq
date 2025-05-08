@@ -39,18 +39,21 @@ pub struct Lowerer<'a> {
     bcu: &'a Bcu,
     file: &'a SourceFile,
     ast: Ast,
+    inline_assembly: Vec<InlineAssembly>,
     instructions: Vec<Inst>,
     scope: Scope<&'a str, InstIdx>,
     scope_backtrack: Scope<&'a str, ThinVec<InstIdx>>,
     within_loop: bool,
+    void_ty_inst_idx: InstIdx,
     break_inst_idx: InstIdx,
     continue_inst_idx: InstIdx,
 }
 
 impl<'a> Lowerer<'a> {
     pub fn new(bcu: &'a Bcu, file: &'a SourceFile, ast: Ast) -> Lowerer<'a> {
-        let mut instructions = Vec::with_capacity(ast.nodes.len() + 2);
+        let mut instructions = Vec::with_capacity(ast.nodes.len() + 3);
 
+        instructions.push(Inst::VoidTy);
         instructions.push(Inst::Break);
         instructions.push(Inst::Continue);
 
@@ -58,15 +61,18 @@ impl<'a> Lowerer<'a> {
             bcu,
             file,
             ast,
+            inline_assembly: Vec::new(),
             instructions,
             scope: Scope::with_layers_capacity(255),
             scope_backtrack: Scope::with_layers_capacity(128),
             within_loop: false,
-            break_inst_idx: InstIdx(0),
-            continue_inst_idx: InstIdx(1),
+            void_ty_inst_idx: InstIdx(0),
+            break_inst_idx: InstIdx(1),
+            continue_inst_idx: InstIdx(2),
         }
     }
 
+    #[inline]
     fn push_instruction(&mut self, instruction: Inst) -> InstIdx {
         let idx = InstIdx(self.instructions.len() as u32);
 
@@ -75,6 +81,7 @@ impl<'a> Lowerer<'a> {
         idx
     }
 
+    #[inline]
     pub fn lower(mut self) -> LowererResult<Bir> {
         let module = std::mem::take(&mut self.ast.module);
 
@@ -84,6 +91,7 @@ impl<'a> Lowerer<'a> {
             Bir {
                 module,
                 strings: self.ast.strings,
+                inline_assembly: self.inline_assembly,
                 instructions: self.instructions,
             }
         })
@@ -150,6 +158,7 @@ impl<'a> Lowerer<'a> {
         Ok(self.push_instruction(instruction))
     }
 
+    #[inline]
     fn lower_optional_node(&mut self, optional_node: Option<ast::NodeIdx>) -> LowererResult<Option<InstIdx>> {
         if let Some(node_idx) = optional_node {
             self.lower_node(node_idx).map(Some)
@@ -188,82 +197,32 @@ impl<'a> Lowerer<'a> {
         }
 
         let primative = match name {
-            | "usize" => Inst::IntTy(IntTy {
-                is_signed: false,
-                bits: self.bcu.target.pointer_bit_width(),
-            }),
+            | "c_char" => {
+                let bits = self.bcu.target.c_type_bit_width(CType::Char);
 
-            | "ssize" => Inst::IntTy(IntTy {
-                is_signed: true,
-                bits: self.bcu.target.pointer_bit_width(),
-            }),
+                if self.bcu.target.is_c_char_signed() {
+                    Inst::SIntTy(bits)
+                } else {
+                    Inst::UIntTy(bits)
+                }
+            }
 
-            | "c_char" => Inst::IntTy(IntTy {
-                is_signed: self.bcu.target.is_c_char_signed(),
-                bits: self.bcu.target.c_type_bit_width(CType::Char),
-            }),
+            | "c_uchar" => Inst::UIntTy(self.bcu.target.c_type_bit_width(CType::Char)),
+            | "c_schar" => Inst::SIntTy(self.bcu.target.c_type_bit_width(CType::Char)),
+            | "c_short" => Inst::SIntTy(self.bcu.target.c_type_bit_width(CType::Short)),
+            | "c_ushort" => Inst::UIntTy(self.bcu.target.c_type_bit_width(CType::UShort)),
+            | "c_int" => Inst::SIntTy(self.bcu.target.c_type_bit_width(CType::Int)),
+            | "c_uint" => Inst::UIntTy(self.bcu.target.c_type_bit_width(CType::UInt)),
+            | "c_long" => Inst::SIntTy(self.bcu.target.c_type_bit_width(CType::Long)),
+            | "c_ulong" => Inst::UIntTy(self.bcu.target.c_type_bit_width(CType::ULong)),
+            | "c_longlong" => Inst::SIntTy(self.bcu.target.c_type_bit_width(CType::LongLong)),
+            | "c_ulonglong" => Inst::UIntTy(self.bcu.target.c_type_bit_width(CType::ULongLong)),
+            | "c_float" => Inst::FloatTy(self.bcu.target.c_type_bit_width(CType::Float)),
+            | "c_double" => Inst::FloatTy(self.bcu.target.c_type_bit_width(CType::Double)),
+            | "c_longdouble" => Inst::FloatTy(self.bcu.target.c_type_bit_width(CType::LongDouble)),
 
-            | "c_uchar" => Inst::IntTy(IntTy {
-                is_signed: false,
-                bits: self.bcu.target.c_type_bit_width(CType::Char),
-            }),
-
-            | "c_schar" => Inst::IntTy(IntTy {
-                is_signed: true,
-                bits: self.bcu.target.c_type_bit_width(CType::Char),
-            }),
-
-            | "c_short" => Inst::IntTy(IntTy {
-                is_signed: true,
-                bits: self.bcu.target.c_type_bit_width(CType::Short),
-            }),
-
-            | "c_ushort" => Inst::IntTy(IntTy {
-                is_signed: false,
-                bits: self.bcu.target.c_type_bit_width(CType::UShort),
-            }),
-
-            | "c_int" => Inst::IntTy(IntTy {
-                is_signed: true,
-                bits: self.bcu.target.c_type_bit_width(CType::Int),
-            }),
-
-            | "c_uint" => Inst::IntTy(IntTy {
-                is_signed: false,
-                bits: self.bcu.target.c_type_bit_width(CType::UInt),
-            }),
-
-            | "c_long" => Inst::IntTy(IntTy {
-                is_signed: true,
-                bits: self.bcu.target.c_type_bit_width(CType::Long),
-            }),
-
-            | "c_ulong" => Inst::IntTy(IntTy {
-                is_signed: false,
-                bits: self.bcu.target.c_type_bit_width(CType::ULong),
-            }),
-
-            | "c_longlong" => Inst::IntTy(IntTy {
-                is_signed: true,
-                bits: self.bcu.target.c_type_bit_width(CType::LongLong),
-            }),
-
-            | "c_ulonglong" => Inst::IntTy(IntTy {
-                is_signed: false,
-                bits: self.bcu.target.c_type_bit_width(CType::ULongLong),
-            }),
-
-            | "c_float" => Inst::FloatTy(FloatTy {
-                bits: self.bcu.target.c_type_bit_width(CType::Float),
-            }),
-
-            | "c_double" => Inst::FloatTy(FloatTy {
-                bits: self.bcu.target.c_type_bit_width(CType::Double),
-            }),
-
-            | "c_longdouble" => Inst::FloatTy(FloatTy {
-                bits: self.bcu.target.c_type_bit_width(CType::LongDouble),
-            }),
+            | "usize" => Inst::UIntTy(self.bcu.target.pointer_bit_width()),
+            | "ssize" => Inst::SIntTy(self.bcu.target.pointer_bit_width()),
 
             | "true" => Inst::Bool(true),
             | "false" => Inst::Bool(false),
@@ -271,9 +230,9 @@ impl<'a> Lowerer<'a> {
             | "void" => Inst::VoidTy,
             | "bool" => Inst::BoolTy,
 
-            | "f16" => Inst::FloatTy(FloatTy { bits: 16 }),
-            | "f32" => Inst::FloatTy(FloatTy { bits: 32 }),
-            | "f64" => Inst::FloatTy(FloatTy { bits: 64 }),
+            | "f16" => Inst::FloatTy(16),
+            | "f32" => Inst::FloatTy(32),
+            | "f64" => Inst::FloatTy(64),
 
             | _ => {
                 if name.len() >= 2 && name.starts_with('u') || name.starts_with('s') {
@@ -281,7 +240,11 @@ impl<'a> Lowerer<'a> {
                     let bits = &name[1..];
 
                     if let Ok(bits) = bits.parse() {
-                        Inst::IntTy(IntTy { is_signed, bits })
+                        if is_signed {
+                            Inst::SIntTy(bits)
+                        } else {
+                            Inst::UIntTy(bits)
+                        }
                     } else {
                         return Err(LowererError::UnexpectedValue(
                             TokenLoc::find(start, self.file),
@@ -303,7 +266,12 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_function(&mut self, function: ast::Function) -> LowererResult<Inst> {
-        let signature = self.lower_function_ty_inner(function.signature)?;
+        let signature = match std::mem::replace(&mut self.ast[function.signature], ast::Node::Int(0)) {
+            ast::Node::FunctionTy(function_ty) => function_ty,
+            _ => unreachable!(),
+        };
+
+        let signature = self.lower_function_ty_inner(signature)?;
 
         let previous_lowering_loop = self.within_loop;
         self.within_loop = false;
@@ -329,7 +297,7 @@ impl<'a> Lowerer<'a> {
         self.within_loop = previous_lowering_loop;
 
         Ok(Inst::Function(Function {
-            signature,
+            signature: self.push_instruction(Inst::FunctionTy(signature)),
             foreign: function.foreign,
             body,
         }))
@@ -352,7 +320,9 @@ impl<'a> Lowerer<'a> {
             parameters,
             is_var_args: function_ty.is_var_args,
             calling_convention: function_ty.calling_convention,
-            return_ty: self.lower_optional_node(function_ty.return_ty)?,
+            return_ty: self
+                .lower_optional_node(function_ty.return_ty)?
+                .unwrap_or(self.void_ty_inst_idx),
             start: function_ty.start,
         })
     }
@@ -644,7 +614,9 @@ impl<'a> Lowerer<'a> {
         }))
     }
 
-    fn lower_inline_assembly(&mut self, inline_assembly: ast::InlineAssembly) -> LowererResult<Inst> {
+    fn lower_inline_assembly(&mut self, inline_assembly: ast::InlineAssemblyIdx) -> LowererResult<Inst> {
+        let inline_assembly = std::mem::take(&mut self.ast[inline_assembly]);
+
         let mut input_constraints = ThinVec::new();
 
         input_constraints.reserve(inline_assembly.input_constraints.len());
@@ -665,13 +637,19 @@ impl<'a> Lowerer<'a> {
             None
         };
 
-        Ok(Inst::InlineAssembly(InlineAssembly {
+        let inline_assembly = InlineAssembly {
             content: inline_assembly.content,
             input_constraints,
             output_constraint,
             clobbers: inline_assembly.clobbers,
             start: inline_assembly.start,
-        }))
+        };
+
+        let inline_assembly_idx = InlineAssemblyIdx(self.inline_assembly.len() as u32);
+
+        self.inline_assembly.push(inline_assembly);
+
+        Ok(Inst::InlineAssembly(inline_assembly_idx))
     }
 
     fn lower_unary_operation(

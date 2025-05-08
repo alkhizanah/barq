@@ -1,6 +1,8 @@
 use std::{process::exit, str::FromStr};
 
 pub mod ast;
+pub mod analyzer;
+pub mod bair;
 pub mod bcu;
 pub mod bir;
 pub mod lexer;
@@ -110,10 +112,18 @@ impl Cli {
                     exit(1);
                 });
 
-                bcu.lower(&options.root_file, ast).unwrap_or_else(|err| {
+                let bir = bcu.lower(&options.root_file, ast).unwrap_or_else(|err| {
                     eprintln!("error: {}", err);
                     exit(1);
                 });
+
+                let bair = bcu.analyze(&options.root_file, bir).unwrap_or_else(|err| {
+                    eprintln!("error: {}", err);
+                    exit(1);
+                });
+
+                println!("{:#?}", bair);
+
             }
         }
     }

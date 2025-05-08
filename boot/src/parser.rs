@@ -4,6 +4,7 @@
 
 use std::{cmp::Ordering, fmt};
 
+use ordered_float::OrderedFloat;
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{ast::*, bcu::*, lexer::Lexer, token::*};
@@ -96,8 +97,9 @@ pub struct Parser<'a> {
     bcu: &'a mut Bcu,
     file: &'a SourceFile,
     lexer: Lexer<'a>,
-    nodes: Vec<Node>,
     strings: String,
+    inline_assembly: Vec<InlineAssembly>,
+    nodes: Vec<Node>,
 }
 
 impl Parser<'_> {
@@ -106,11 +108,13 @@ impl Parser<'_> {
             bcu,
             file,
             lexer: Lexer::new(file.buffer.as_str()),
-            nodes: Vec::new(),
             strings: String::new(),
+            inline_assembly: Vec::new(),
+            nodes: Vec::new(),
         }
     }
 
+    #[inline]
     fn unexpected_token(&mut self, expected_kinds: Vec<TokenKind>) -> ParserError {
         ParserError::UnexpectedToken(
             TokenLoc::find(self.lexer.peek().range.start, self.file),
@@ -118,6 +122,7 @@ impl Parser<'_> {
         )
     }
 
+    #[inline]
     pub fn parse(mut self) -> ParserResult<Ast> {
         self.parse_struct_inner(0, TokenKind::Eof).map(|module| {
             self.strings.shrink_to_fit();
@@ -126,11 +131,13 @@ impl Parser<'_> {
             Ast {
                 module,
                 strings: self.strings,
+                inline_assembly: self.inline_assembly,
                 nodes: self.nodes,
             }
         })
     }
 
+    #[inline]
     fn expect(&mut self, expect_kind: TokenKind) -> ParserResult<Token> {
         if let Some(token) = self.lexer.next_if_eq(expect_kind) {
             Ok(token)
@@ -139,6 +146,7 @@ impl Parser<'_> {
         }
     }
 
+    #[inline]
     fn expect_either(&mut self, expect_kinds: &[TokenKind]) -> ParserResult<Token> {
         if let Some(token) = self.lexer.next_if(|x| expect_kinds.contains(&x.kind)) {
             Ok(token)
@@ -147,6 +155,7 @@ impl Parser<'_> {
         }
     }
 
+    #[inline]
     fn expect_semicolon(&mut self) -> ParserResult<()> {
         if self.lexer.next_if_eq(TokenKind::Semicolon).is_none()
             && self.lexer.prev().map(|x| x.kind) != Some(TokenKind::CloseBrace)
@@ -157,6 +166,7 @@ impl Parser<'_> {
         }
     }
 
+    #[inline]
     fn push_node(&mut self, node: Node) -> NodeIdx {
         let node_idx = NodeIdx(self.nodes.len() as u32);
 
@@ -569,13 +579,13 @@ impl Parser<'_> {
             ));
         };
 
-        Ok(Node::Float(val))
+        Ok(Node::Float(OrderedFloat(val)))
     }
 
     fn parse_function(&mut self) -> ParserResult<Node> {
         let fn_keyword = self.lexer.next();
 
-        let mut fn_ty = FunctionTy {
+        let mut signature = FunctionTy {
             parameters: ThinVec::new(),
             is_var_args: false,
             return_ty: None,
@@ -592,7 +602,7 @@ impl Parser<'_> {
 
             let param_ty = self.parse_expr(ParserPrecedence::Lowest)?;
 
-            fn_ty.parameters.push((param_name, param_ty));
+            signature.parameters.push((param_name, param_ty));
 
             if self
                 .expect_either(&[TokenKind::Comma, TokenKind::CloseParen])?
@@ -603,7 +613,7 @@ impl Parser<'_> {
             }
 
             if self.lexer.next_if_eq(TokenKind::TriplePeriod).is_some() {
-                fn_ty.is_var_args = true;
+                signature.is_var_args = true;
 
                 self.expect(TokenKind::CloseParen)?;
 
@@ -611,13 +621,13 @@ impl Parser<'_> {
             }
         }
 
-        fn_ty.parameters.shrink_to_fit();
+        signature.parameters.shrink_to_fit();
 
         if !matches!(
             self.lexer.peek().kind,
             TokenKind::OpenBrace | TokenKind::SpecialIdentifier
         ) {
-            fn_ty.return_ty = Some(self.parse_expr(ParserPrecedence::Lowest)?);
+            signature.return_ty = Some(self.parse_expr(ParserPrecedence::Lowest)?);
         }
 
         let mut foreign = None;
@@ -632,7 +642,7 @@ impl Parser<'_> {
                         foreign = Some(self.expect(TokenKind::StringLiteral)?.range);
 
                         if !explicit_callconv {
-                            fn_ty.calling_convention = CallingConvention::C;
+                            signature.calling_convention = CallingConvention::C;
                         }
 
                         self.expect(TokenKind::CloseParen)?;
@@ -647,7 +657,7 @@ impl Parser<'_> {
                     let token = self.expect(TokenKind::Identifier)?;
                     let token_value = token.range.get(self.file.buffer.as_str());
 
-                    fn_ty.calling_convention = match token_value {
+                    signature.calling_convention = match token_value {
                         | "auto" => CallingConvention::Auto,
                         | "c" => CallingConvention::C,
                         | "inline" => CallingConvention::Inline,
@@ -683,14 +693,18 @@ impl Parser<'_> {
             ThinVec::new()
         };
 
+        let signature = Node::FunctionTy(signature);
+
         if !body.is_empty() || foreign.is_some() {
+            let signature = self.push_node(signature);
+
             Ok(Node::Function(Function {
-                signature: fn_ty,
+                signature,
                 foreign,
                 body,
             }))
         } else {
-            Ok(Node::FunctionTy(fn_ty))
+            Ok(signature)
         }
     }
 
@@ -974,13 +988,19 @@ impl Parser<'_> {
         input_constraints.shrink_to_fit();
         clobbers.shrink_to_fit();
 
-        Ok(Node::InlineAssembly(InlineAssembly {
+        let inline_assembly = InlineAssembly {
             content,
             input_constraints,
             output_constraint,
             clobbers,
             start,
-        }))
+        };
+
+        let inline_assembly_idx = InlineAssemblyIdx(self.inline_assembly.len() as u32);
+
+        self.inline_assembly.push(inline_assembly);
+
+        Ok(Node::InlineAssembly(inline_assembly_idx))
     }
 
     fn parse_constraint(&mut self) -> ParserResult<Constraint> {

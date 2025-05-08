@@ -5,11 +5,7 @@
 use std::{fmt, str::FromStr};
 
 use crate::{
-    ast::Ast,
-    bir::Bir,
-    cfg_match,
-    lowerer::{Lowerer, LowererResult},
-    parser::{Parser, ParserResult},
+    analyzer::{Analyzer, AnalyzerResult}, ast::Ast, bair::Bair, bir::Bir, cfg_match, lowerer::{Lowerer, LowererResult}, parser::{Parser, ParserResult}
 };
 
 pub struct Bcu {
@@ -31,6 +27,10 @@ impl Bcu {
 
     pub fn lower(&self, file: &SourceFile, ast: Ast) -> LowererResult<Bir> {
         Lowerer::new(self, file, ast).lower()
+    }
+
+    pub fn analyze(&self, file: &SourceFile, bir: Bir) -> AnalyzerResult<Bair> {
+        Analyzer::new(self, file, bir).analyze()
     }
 }
 

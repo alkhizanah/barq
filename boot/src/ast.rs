@@ -2,18 +2,21 @@
 //!
 //! A tree that reperesents source code as `Node`s instead of `Token`s (in token.rs)
 
+use ordered_float::OrderedFloat;
 use thin_vec::ThinVec;
 
-use crate::{create_index_wrapper, token::*};
+use crate::{create_index_wrapper_mut, token::*};
 
 #[derive(Debug, PartialEq)]
 pub struct Ast {
     pub module: StructTy,
-    pub nodes: Vec<Node>,
     pub strings: String,
+    pub inline_assembly: Vec<InlineAssembly>,
+    pub nodes: Vec<Node>,
 }
 
-create_index_wrapper!(Ast, nodes, Node, NodeIdx, u32);
+create_index_wrapper_mut!(Ast, inline_assembly, InlineAssembly, InlineAssemblyIdx);
+create_index_wrapper_mut!(Ast, nodes, Node, NodeIdx);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Binding {
@@ -31,7 +34,7 @@ pub enum Node {
     Identifier(ByteRange),
     String(StringRange),
     Int(u64),
-    Float(f64),
+    Float(OrderedFloat<f64>),
     Function(Function),
     Slice(Slice),
     Struct(Struct),
@@ -41,7 +44,7 @@ pub enum Node {
     Assign(Assign),
     BuiltinCall(BuiltinCall),
     Call(Call),
-    InlineAssembly(InlineAssembly),
+    InlineAssembly(InlineAssemblyIdx),
     Cast(BinaryOperation),
     ElementAccess(BinaryOperation),
     FieldAccess(FieldAccess),
@@ -132,7 +135,7 @@ impl From<Operator> for BinaryOperator {
 
 #[derive(Debug, PartialEq)]
 pub struct Function {
-    pub signature: FunctionTy,
+    pub signature: NodeIdx,
     pub foreign: Option<ByteRange>,
     pub body: ThinVec<NodeIdx>,
 }
@@ -146,7 +149,7 @@ pub struct FunctionTy {
     pub start: ByteOffset,
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Default)]
 pub enum CallingConvention {
     #[default]
     Auto,
@@ -170,7 +173,7 @@ pub struct PointerTy {
     pub start: ByteOffset,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub enum PointerSize {
     One,
     Many,
@@ -194,7 +197,7 @@ pub struct EnumTy {
     pub start: ByteOffset,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub struct InlineAssembly {
     pub content: StringRange,
     pub input_constraints: ThinVec<Constraint>,
